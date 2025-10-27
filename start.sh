@@ -113,18 +113,27 @@ main() {
     print_status "Setting up backend..."
     cd backend
     
-    # Create virtual environment if it doesn't exist
-    if [ ! -d "venv" ]; then
-        print_status "Creating Python virtual environment..."
-        python3 -m venv venv
+    # Create a local virtual environment (use .venv) and install dependencies
+    VENV_DIR=".venv"
+    if [ ! -d "$VENV_DIR" ]; then
+        print_status "Creating Python virtual environment at $VENV_DIR..."
+        python3 -m venv "$VENV_DIR"
     fi
-    
+
     # Activate virtual environment
-    source venv/bin/activate
-    
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+
+    # Use the venv's python to run pip so we avoid system-managed pip issues
+    PYTHON_BIN="$VENV_DIR/bin/python"
+    PIP_CMD="$PYTHON_BIN -m pip"
+
+    print_status "Upgrading pip, setuptools, wheel in venv..."
+    $PIP_CMD install --upgrade pip setuptools wheel
+
     # Install Python dependencies
     print_status "Installing Python dependencies..."
-    pip install -r requirements.txt
+    $PIP_CMD install -r requirements.txt
     
     # Set up environment variables for SQLite
     export DATABASE_URL="sqlite:///./zerotrust.db"
