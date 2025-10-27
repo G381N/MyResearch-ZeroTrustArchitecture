@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+scikit-learn
+psutil
+watchdog
+python-socketio
+joblib
+numpy
+pandas
+python-multipart
+pydantic
+python-dotenv

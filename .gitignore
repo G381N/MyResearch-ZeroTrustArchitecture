@@ -1,0 +1,69 @@
+# === Root .gitignore for MyResearch project ===
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.venv/
+pip-wheel-metadata/
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Byte-compiled / caches
+.__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# Distribution / packaging
+*.egg
+*.egg-info/
+.eggs/
+*.whl
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Environment variables
+.env
+.env.*.local
+.env.local
+*.env
+
+# Logs and databases
+logs/
+*.log
+*.sqlite3
+*.db
+*.pid
+backend.pid
+frontend.pid
+
+# Models and large files (don't check in trained models)
+models/*.joblib
+backend/models/*.joblib
+models/*.pkl
+*.h5
+*.pt
+*.ckpt
+
+# Node / frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+.next/
+out/
+dist/
+build/
+
+# Misc
+.DS_Store
+Thumbs.db

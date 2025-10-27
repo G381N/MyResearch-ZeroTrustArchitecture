@@ -1,0 +1,197 @@
+% IEEE conference template
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{color}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{microtype}
+
+\graphicspath{{./figures/}}
+
+\begin{document}
+
+\title{An Implementation of an Event-driven Zero Trust Architecture for Long-running Training and Online Anomaly Detection}
+
+\author{\IEEEauthorblockN{Gebin George\thanks{Author: Gebin George (Student), Guide: Dr. Sagaya Aurelia.}
+\IEEEauthorblockA{Christ (Deemed to be University), Bangalore\\
+Email: gebin.george@example.com}}
+}
+
+\maketitle
+
+\begin{abstract}
+Zero Trust Architecture (ZTA) principles are rapidly being adopted to harden systems by continuously evaluating trust based on observable behavior rather than implicit perimeter assumptions. This paper presents a practical implementation of an event-driven ZTA prototype that collects system telemetry, supports long-running training sessions, and uses an IsolationForest-based anomaly detector for live inference. We describe the system architecture, design decisions, persistence and recovery mechanisms that enable hours-long training sessions without data loss, and the WebSocket-enabled realtime pipeline for monitoring. We compare the implemented system to representative ZTA approaches and demonstrate how our architecture addresses common operational failure modes such as interrupted training, accidental session termination, and frontend-driven reloads. Finally, we outline evaluation methodology, limitations, and future work.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Zero Trust Architecture, Anomaly Detection, Isolation Forest, Event Pipeline, FastAPI, Next.js, System Design
+\end{IEEEkeywords}
+
+\section{Introduction}
+Zero Trust Architecture (ZTA) moves security to continuous verification: every access and action is evaluated on contextual signals rather than assumed trust by location~\cite{nist800207}. Implementations typically require robust telemetry collection, online decision engines, and operational controls to retrain and update detection models. In practice, production-grade ZTA systems must handle noisy telemetry, long data-collection sessions, and resilient model lifecycle management while providing low-latency inference.
+
+This paper documents an implemented ZTA prototype ("Zero Trust Architecture System") developed to collect system events, persist them reliably, support long-running training sessions (hours), and perform live anomaly detection. The system integrates a FastAPI backend, SQLite persistence, a thread-based event collector, a WebSocket distribution layer, and a Next.js frontend for operator control. The ML engine uses IsolationForest for unsupervised anomaly detection.
+
+Contributions of this paper are:
+\begin{itemize}[leftmargin=*]
+  \item An event-driven ZTA implementation that preserves training session state across backend restarts, enabling multi-hour data collection with DB-backed session resume.
+  \item Engineering practices to prevent accidental interruption (frontend reload suppression, guarded stop endpoint, session re-resolution) and to surface instrumentation for diagnosing unexpected stop calls.
+  \item A comparative discussion showing how these pragmatic choices address common operational gaps in simpler ZTA prototypes.
+\end{itemize}
+
+\section{Related Work}
+A number of architectures and prototypes for ZTA and behavior-based anomaly detection are described in literature and guidance documents. NIST Special Publication 800-207 outlines ZTA principles and recommended capabilities~\cite{nist800207}. Recent academic and industry work focuses on telemetry-driven access control, micro-segmentation, and anomaly-based detection for insider threat and lateral movement~\cite{rose2020zero, yu2021survey}.
+
+Many academic prototypes emphasize detection algorithms and feature engineering but omit operational hardening (persistence, restart recovery, UI resilience). Commercial solutions add orchestration and scale but are proprietary and often complex to integrate. Our work positions itself as an open, pragmatic prototype that fills the operational gap for long-lived training sessions and reproducible model lifecycle management.
+
+\section{System Architecture}
+Figure~\ref{fig:arch} shows the high-level architecture of the implemented system. The main components are:
+\begin{itemize}[leftmargin=*]
+  \item Event Collector: platform-specific telemetry source that emits events to the backend.
+  \item Backend API (FastAPI): REST control endpoints (`/api/train/*`), event ingestion (`/api/events`), and WebSocket endpoint (`/ws`) for real-time broadcasts.
+  \item Persistence (SQLite / SQLAlchemy): Stores `sessions`, `events`, `anomalies`, and `training_data`.
+  \item WebSocket Manager: maintains client sockets and broadcasts session updates and events.
+  \item ML Engine: IsolationForest-based training and inference component.
+  \item Frontend (Next.js): Operator UI for starting/stopping training, viewing events, and monitoring model status.
+\end{itemize}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.95\linewidth]{architecture_diagram_placeholder.png}
+  \caption{High-level system architecture (placeholder diagram).}
+  \label{fig:arch}
+\end{figure}
+
+\subsection{Event lifecycle}
+When an event is captured by the collector, the backend writes the event to the DB in a dedicated thread (to avoid blocking the event loop), associates it with the current training session id (if training is active), and schedules a coroutine to broadcast the stored event to connected WebSocket clients.
+
+\subsection{Training session lifecycle and persistence}
+Training sessions are persisted as `Session` rows in the DB. When training is started, a new session row with `is_active=true` is created and an in-memory pointer `current_training_session` holds the session id. Events written during that time include `session_id`. On backend startup, the most recent active training session (if any) is restored to `current_training_session` as a lightweight pointer so event writes after restart still attach to the session. The stop operation resolves the DB session by id (preventing detached ORM issues), collects session events for training, and updates the session with `model_version` upon success.
+
+\section{Implementation Details}
+\subsection{Backend implementation}
+The backend is implemented in Python using FastAPI and SQLAlchemy. Key engineering decisions include:
+\begin{itemize}[leftmargin=*]
+  \item Use of a small, single-file SQLite database for ease of reproducibility and portability.
+  \item Writing collected events in a thread using `asyncio.to_thread` to avoid blocking the main event loop and to ensure DB session lifecycle isolation.
+  \item Restoring a lightweight session pointer on startup (SimpleNamespace) and re-resolving ORM instances during critical control operations (stop) to avoid detached instance errors.
+  \item Instrumenting the stop endpoint to log request metadata (client host, user-agent, referer, origin) to diagnose accidental or automated stop callers.
+  \item Adding an in-memory `_stop_in_progress` guard to avoid concurrent stop requests racing.
+\end{itemize}
+
+Listing~\ref{lst:stop} shows the key stop handler steps (informal pseudocode):
+\begin{lstlisting}[caption={Stop handler (core steps)\label{lst:stop}}]
+1. Log request metadata for diagnostics
+2. Check and set _stop_in_progress guard
+3. Resolve session_id from current_training_session
+4. Load DB session row by id
+5. Mark session is_active = False; set end_time
+6. Query all events for that session; require minimum count
+7. Train model with events (ml_engine.train_model)
+8. Update session.model_version and commit
+9. Broadcast session_update completion
+10. Reset current_training_session and clear guard
+\end{lstlisting}
+
+\subsection{Frontend implementation}
+The frontend is built with Next.js (App Router) and React. Notable behaviors:
+\begin{itemize}[leftmargin=*]
+  \item WebSocket client with automatic reconnects and a small message dispatcher (`useWebSocket` and `useWebSocketMessage`).
+  \item Training UI that calls `POST /api/train/start` and `POST /api/train/stop` and subscribes to `session_update` and `event` messages to update UI state.
+  \item On mount, the training UI queries `GET /api/train/status` and, if active, loads persisted events via `GET /api/events?session_id=<id>` so the UI can recover after refresh.
+  \item A `NoReloadGuard` component overrides programmatic `window.location.reload/assign/replace` calls during long runs to reduce accidental hard reloads introduced by dev HMR or third-party scripts.
+\end{itemize}
+
+\section{Comparative Analysis}
+This section contrasts the implemented system with representative ZTA prototype patterns and highlights practical trade-offs.
+
+\subsection{Comparison criteria}
+We compare along operational robustness, persistence and recovery, ease of deployment, model lifecycle support, and performance.
+
+\subsection{Representative systems}
+\begin{itemize}[leftmargin=*]
+  \item Simple in-memory prototypes: often maintain sessions and events only in memory; cheap to build but lose telemetry and session state on process restart.
+  \item Microservice-scale solutions: use streaming infrastructure (Kafka), scalable databases, and orchestrated model serving; production-ready but complex and heavyweight.
+  \item Managed commercial ZTA offerings: integrate telemetry, policy, and enforcement across enterprise stacks at scale with proprietary telemetry agents.
+\end{itemize}
+
+\subsection{How our implementation compares}
+\begin{itemize}[leftmargin=*]
+  \item Persistence & recovery: Unlike pure in-memory prototypes, our system persists sessions and events in SQLite and restores active sessions after restart. This enables long collection windows (hours) even across backend restarts.
+  \item Operational simplicity: Compared to Kafka-based pipelines, the implementation keeps the stack lightweight (FastAPI + SQLite + WebSocket). This lowers the barrier for research and reproducibility while sacrificing horizontal scale.
+  \item Model lifecycle: The system implements a simple train-on-stop lifecycle and records `model_version` in the session row. It does not (yet) support continuous incremental learning or A/B deployment pipelines common in mature ML platforms.
+  \item Safety & diagnostics: We added stop instrumentation, duplicate-stop guards, and frontend reload prevention which address common operational failures in ad-hoc prototypes.
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\caption{Qualitative comparison}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+System & Persistence & Recovery & Simplicity & Scale\\
+\midrule
+In-memory prototype & Poor & No & High & Low\\
+This implementation & Good & Yes & High & Moderate\\
+Kafka + k8s pipeline & Very good & Yes & Low & Very high\\
+Commercial ZTA & Very good & Yes & Low & Very high\\
+\bottomrule
+\end{tabular}
+\label{tab:comp}
+\end{table}
+
+\section{Evaluation and Experiments}
+We outline how to evaluate this prototype in practice. The evaluation focuses on: (1) functional correctness, (2) robustness of long-running training sessions, and (3) anomaly detection performance.
+
+\subsection{Functional checks}
+\begin{itemize}[leftmargin=*]
+  \item Start a training session and verify `POST /api/train/start` returns a session id and `GET /api/train/status` reports the same session.
+  \item Generate events (via event collector) and assert `GET /api/events?session_id=<id>` returns the recorded events after several minutes.
+  \item Stop training and verify the session is updated with `is_active=false` and `model_version` is set.
+\end{itemize}
+
+\subsection{Robustness experiments}
+To validate persistence and recovery, run the backend and start training; after collecting events for several hours, kill the backend process and restart. Verify that `GET /api/train/status` returns the restored active session id and that subsequent events are attached to the same session.
+
+\subsection{Model performance}
+The system uses IsolationForest as an unsupervised baseline. To evaluate detection performance:
+\begin{itemize}[leftmargin=*]
+  \item Prepare labelled test sets (synthetic anomalies or known malicious traces).
+  \item Train on normal-use telemetry collected during training sessions.
+  \item Assess precision, recall, and AUC on the labelled test set.
+\end{itemize}
+
+\section{Limitations}
+\begin{itemize}[leftmargin=*]
+  \item Scalability: SQLite and single-process FastAPI are sufficient for prototypes and small deployments but do not scale to enterprise telemetry rates. For scale, replace with a streaming pipeline and distributed DB.
+  \item Model updates: The current model is trained on stop; there is no incremental or continuous training pipeline.
+  \item Security & access control: The prototype exposes endpoints without production-grade authentication and authorization. Integrating OAuth2/JWT and RBAC is required for production.
+\end{itemize}
+
+\section{Conclusions and Future Work}
+We presented an event-driven ZTA prototype that emphasizes operational resilience for long-running training sessions, provides DB-backed persistence and session restoration, and integrates realtime WebSocket-based monitoring and a simple IsolationForest ML engine. Key engineering additions—stop instrumentation, in-memory guards, and frontend reload protection—address practical failure modes often overlooked in prototypes.
+
+Planned future work includes: integrating a scalable message bus, implementing incremental model updates and validation pipelines, adding access controls for APIs, and more comprehensive experiments comparing different anomaly detection models in the same pipeline.
+
+\section*{Acknowledgment}
+The author would like to thank Dr. Sagaya Aurelia for guidance and Christ (Deemed to be University), Bangalore for support during this project.
+
+\begin{thebibliography}{9}
+\bibitem{nist800207}
+NIST, "Zero Trust Architecture" Special Publication 800-207, 2020.
+
+\bibitem{rose2020zero}
+S. Rose, O. Borchert, S. Mitchell, and S. Connelly, "Zero Trust Architecture," NIST Special Publication 800-207 (Draft), 2020.
+
+\bibitem{yu2021survey}
+H. Yu, Y. Xie, and J. Zhang, "A Survey on Anomaly Detection in System Logs," Journal of Systems and Software, 2021.
+
+\end{thebibliography}
+
+\end{document}

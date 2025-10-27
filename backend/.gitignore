@@ -1,0 +1,33 @@
+# === backend/.gitignore ===
+
+# Python runtime and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# Environment files
+.env
+.env.local
+
+# Logs and runtime files
+logs/
+*.log
+*.pid
+
+# Databases
+*.sqlite3
+*.db
+
+# Trained models and large artifacts
+models/*.joblib
+models/*.pkl
+
+# IDEs
+.vscode/
+.idea/
