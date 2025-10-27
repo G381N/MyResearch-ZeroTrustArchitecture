@@ -47,19 +47,19 @@ export default function LiveMode({ websocket, systemStatus }: LiveModeProps) {
   const [success, setSuccess] = useState<string | null>(null)
 
   // Handle WebSocket messages
-  useWebSocketMessage(websocket, 'event', (data) => {
-    if (isLive && data.is_anomaly) {
-      setEvents(prev => [data, ...prev.slice(0, 99)]) // Keep last 100 events
-      setAnomalies(prev => [data, ...prev.slice(0, 49)]) // Keep last 50 anomalies
-    }
-  })
-
   useWebSocketMessage(websocket, 'anomaly', (data) => {
     if (isLive) {
-      setAnomalies(prev => [data, ...prev.slice(0, 49)])
+      // Add to both events and anomalies lists for Live Mode
+      setEvents(prev => [data, ...prev.slice(0, 99)]) // Keep last 100 events
+      setAnomalies(prev => [data, ...prev.slice(0, 49)]) // Keep last 50 anomalies
       setStats(prev => ({
         ...prev,
-        anomalyCount: prev.anomalyCount + 1
+        anomalyCount: prev.anomalyCount + 1,
+        totalEvents: prev.totalEvents + 1,
+        eventCounts: {
+          ...prev.eventCounts,
+          [data.event_type]: (prev.eventCounts[data.event_type] || 0) + 1
+        }
       }))
     }
   })
@@ -71,6 +71,28 @@ export default function LiveMode({ websocket, systemStatus }: LiveModeProps) {
         ...prev.slice(-19), // Keep last 20 points
         { timestamp: new Date().toLocaleTimeString(), score: data.current_score }
       ])
+      
+      // Update stats with new trust score
+      setStats(prev => ({
+        ...prev,
+        trustScore: data.current_score
+      }))
+    }
+  })
+
+  // Handle admin alerts
+  useWebSocketMessage(websocket, 'alert', (data) => {
+    if (isLive && data.type === 'trust_threshold_breach') {
+      // Show browser notification if permission granted
+      if (Notification.permission === 'granted') {
+        new Notification('Zero Trust Alert', {
+          body: data.message,
+          icon: '/favicon.ico'
+        })
+      }
+      
+      // You could also trigger additional UI alerts here
+      console.warn('Admin Alert:', data)
     }
   })
 

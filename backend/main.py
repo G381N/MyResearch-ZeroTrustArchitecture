@@ -13,6 +13,7 @@ from database import init_database, check_database_connection
 from ml_engine import ml_engine
 from event_collector import event_collector
 from websocket_manager import websocket_manager
+from trust_scorer import trust_scorer
 from config import settings
 
 # Configure logging
@@ -194,19 +195,30 @@ async def handle_collected_event(event_data):
 
         # Synchronously write to the database in a thread to avoid blocking the event loop
         from database import SessionLocal
-        from models import Event as DBEvent
+        from models import Event as DBEvent, Anomaly as DBAnom
 
         def _write_event():
             db = SessionLocal()
             try:
-                session_id = None
+                training_session_id = None
+                live_session_id = None
+                
                 try:
-                    # read current training session from the training router module
+                    # Check if training mode is active
                     from routers import training as training_router
-                    sid = training_router.current_training_session.id if training_router.current_training_session else None
-                    session_id = sid
-                except Exception:
-                    session_id = None
+                    if training_router.current_training_session:
+                        training_session_id = training_router.current_training_session.id
+                    
+                    # Check if live mode is active  
+                    from routers import live as live_router
+                    if live_router.current_live_session:
+                        live_session_id = live_router.current_live_session.id
+                        
+                except Exception as e:
+                    logger.error(f"Error checking session states: {e}")
+
+                # Use appropriate session ID based on mode
+                session_id = training_session_id if training_session_id else live_session_id
 
                 db_event = DBEvent(
                     event_type=event_data.get('event_type'),
@@ -217,22 +229,105 @@ async def handle_collected_event(event_data):
                 db.commit()
                 db.refresh(db_event)
 
-                # If in training mode, broadcast as training event; otherwise broadcast generic event
                 target_loop = MAIN_LOOP
                 if target_loop:
-                    payload = {
-                        "id": db_event.id,
-                        "timestamp": db_event.timestamp.isoformat(),
-                        "event_type": db_event.event_type,
-                        "metadata": db_event.event_metadata
-                    }
-                    if session_id:
-                        payload["mode"] = "training"
-                    try:
-                        import asyncio
-                        asyncio.run_coroutine_threadsafe(websocket_manager.broadcast_event(payload), target_loop)
-                    except Exception as e:
-                        logger.error(f"Failed to schedule broadcast in main loop: {e}")
+                    # Training Mode: broadcast all events
+                    if training_session_id:
+                        payload = {
+                            "id": db_event.id,
+                            "timestamp": db_event.timestamp.isoformat(),
+                            "event_type": db_event.event_type,
+                            "metadata": db_event.event_metadata,
+                            "mode": "training"
+                        }
+                        try:
+                            import asyncio
+                            asyncio.run_coroutine_threadsafe(websocket_manager.broadcast_event(payload), target_loop)
+                        except Exception as e:
+                            logger.error(f"Failed to broadcast training event: {e}")
+                    
+                    # Live Mode: perform anomaly detection
+                    elif live_session_id and ml_engine.is_trained:
+                        try:
+                            # Convert event to format expected by ML engine
+                            ml_event = {
+                                'timestamp': db_event.timestamp.isoformat(),
+                                'event_type': db_event.event_type,
+                                'metadata': db_event.event_metadata or {}
+                            }
+                            
+                            # Perform anomaly detection
+                            is_anomaly, confidence = ml_engine.predict_anomaly(ml_event)
+                            
+                            if is_anomaly:
+                                # Create anomaly record
+                                anomaly = DBAnom(
+                                    event_id=db_event.id,
+                                    session_id=live_session_id,
+                                    confidence_score=confidence,
+                                    is_resolved=False
+                                )
+                                db.add(anomaly)
+                                
+                                # Update trust score
+                                trust_result = trust_scorer.update_trust_score(
+                                    db_event.id, 
+                                    db_event.event_type, 
+                                    confidence, 
+                                    is_anomaly
+                                )
+                                
+                                # Update event with trust impact
+                                db_event.trust_impact = trust_result['change']
+                                
+                                db.commit()
+                                db.refresh(anomaly)
+                                
+                                # Broadcast anomaly event (only anomalies in live mode)
+                                anomaly_payload = {
+                                    "id": db_event.id,
+                                    "timestamp": db_event.timestamp.isoformat(),
+                                    "event_type": db_event.event_type,
+                                    "metadata": db_event.event_metadata,
+                                    "mode": "live",
+                                    "is_anomaly": True,
+                                    "confidence": confidence,
+                                    "trust_impact": trust_result['change'],
+                                    "anomaly_id": anomaly.id
+                                }
+                                
+                                # Broadcast trust score update
+                                trust_payload = {
+                                    "current_score": trust_result['new_score'],
+                                    "change": trust_result['change'],
+                                    "deduction": trust_result['deduction'],
+                                    "event_id": db_event.id,
+                                    "confidence": confidence
+                                }
+                                
+                                import asyncio
+                                asyncio.run_coroutine_threadsafe(websocket_manager.broadcast_anomaly(anomaly_payload), target_loop)
+                                asyncio.run_coroutine_threadsafe(websocket_manager.broadcast_trust_update(trust_payload), target_loop)
+                                
+                                # Check for admin alert
+                                if trust_result['alert_triggered']:
+                                    alert_payload = {
+                                        "type": "trust_threshold_breach",
+                                        "message": f"Trust score dropped below threshold: {trust_result['new_score']} < {settings.TRUST_ALERT_THRESHOLD}",
+                                        "trust_score": trust_result['new_score'],
+                                        "threshold": settings.TRUST_ALERT_THRESHOLD,
+                                        "event_id": db_event.id,
+                                        "timestamp": db_event.timestamp.isoformat()
+                                    }
+                                    asyncio.run_coroutine_threadsafe(websocket_manager.broadcast_alert(alert_payload), target_loop)
+                                    
+                                logger.info(f"Anomaly detected: {db_event.event_type} (confidence: {confidence:.2f}, trust impact: {trust_result['change']})")
+                            else:
+                                # Normal event in live mode - don't broadcast (only show anomalies)
+                                logger.debug(f"Normal event in live mode: {db_event.event_type}")
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing live mode event: {e}")
                 else:
                     logger.warning("MAIN_LOOP not available; cannot broadcast event from thread")
 

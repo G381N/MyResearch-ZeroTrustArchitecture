@@ -77,6 +77,36 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
     }
   })
 
+  // Handle admin alerts
+  useWebSocketMessage(websocket, 'alert', (data) => {
+    if (data.type === 'trust_threshold_breach') {
+      setError(`CRITICAL ALERT: ${data.message}`)
+      
+      // Show browser notification if permission granted
+      if (Notification.permission === 'granted') {
+        new Notification('Zero Trust CRITICAL ALERT', {
+          body: data.message,
+          icon: '/favicon.ico',
+          requireInteraction: true // Keep notification until user interacts
+        })
+      }
+      
+      console.error('Critical Trust Alert:', data)
+    }
+  })
+
+  // Handle trust score updates in stats
+  useWebSocketMessage(websocket, 'trust_update', (data) => {
+    if (stats) {
+      setStats(prev => ({
+        ...prev,
+        trust_score: {
+          current_score: data.current_score
+        }
+      }))
+    }
+  })
+
   const fetchAnomalies = async () => {
     try {
       setIsLoading(true)
