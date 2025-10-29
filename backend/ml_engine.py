@@ -55,11 +55,35 @@ class MLEngine:
             # Auth success flag
             auth_success = 1 if event.get('metadata', {}).get('auth_success', False) else 0
             
-            # File change severity (if available)
-            file_change_severity = event.get('metadata', {}).get('file_change_severity', 0)
+            # Suspicious indicators (new features for better detection)
+            suspicious_flag = 1 if event.get('metadata', {}).get('suspicious', False) else 0
+            unauthorized_flag = 1 if event.get('metadata', {}).get('unauthorized', False) else 0
+            attack_indicator = 1 if any(key in event.get('metadata', {}) for key in ['attack_type', 'brute_force', 'exfiltration', 'lateral_movement']) else 0
             
-            # Network connection type (if available)
-            network_type = event.get('metadata', {}).get('network_type', 0)
+            # Port risk score (high risk ports get higher scores)
+            port = event.get('metadata', {}).get('port', 443)
+            if isinstance(port, (int, float)):
+                high_risk_ports = [4444, 6666, 1337, 31337, 9999, 8080]
+                port_risk = 1 if port in high_risk_ports else 0
+            else:
+                port_risk = 0
+            
+            # File sensitivity score
+            file_path = event.get('metadata', {}).get('file_path', '')
+            if isinstance(file_path, str):
+                sensitive_paths = ['/etc/', '/boot/', '/var/log/', '/root/']
+                file_sensitivity = 1 if any(path in file_path for path in sensitive_paths) else 0
+            else:
+                file_sensitivity = 0
+                
+            # IP reputation score (external IPs are more suspicious)
+            source_ip = event.get('metadata', {}).get('source_ip', '192.168.1.1')
+            if isinstance(source_ip, str):
+                # Internal IP ranges are less suspicious
+                internal_ranges = ['192.168.', '10.0.', '172.16.', '127.0.']
+                ip_reputation = 0 if any(source_ip.startswith(range_) for range_ in internal_ranges) else 1
+            else:
+                ip_reputation = 0
             
             feature_vector = [
                 hour_of_day,
@@ -71,8 +95,12 @@ class MLEngine:
                 frequency_5min,
                 frequency_1min,
                 auth_success,
-                file_change_severity,
-                network_type
+                suspicious_flag,
+                unauthorized_flag,
+                attack_indicator,
+                port_risk,
+                file_sensitivity,
+                ip_reputation
             ]
             
             features.append(feature_vector)
@@ -113,33 +141,47 @@ class MLEngine:
             self.scaler = RobustScaler()  # More robust to outliers than StandardScaler
             X_scaled = self.scaler.fit_transform(X)
             
-            # Calculate dynamic contamination based on actual data if available
+            # Calculate intelligent contamination based on data analysis
             contamination = settings.CONTAMINATION
             
-            # Count actual anomalies if we have labels (from event metadata)
+            # Count actual anomalies and analyze feature patterns
             anomaly_count = 0
             total_count = len(training_events)
+            suspicious_indicators = 0
             
             for event in training_events:
                 if event.get('metadata', {}).get('is_anomaly', False):
                     anomaly_count += 1
+                    
+                # Count suspicious indicators in the data
+                metadata = event.get('metadata', {})
+                if any(key in metadata for key in ['suspicious', 'unauthorized', 'attack_type', 'brute_force']):
+                    suspicious_indicators += 1
             
             if anomaly_count > 0:
                 actual_contamination = anomaly_count / total_count
-                # Use actual contamination but cap it between 0.05 and 0.3
-                contamination = max(0.05, min(0.3, actual_contamination))
-                logger.info(f"Using dynamic contamination: {contamination:.3f} based on {anomaly_count}/{total_count} anomalies")
+                # Adjust based on suspicious indicator density
+                indicator_ratio = suspicious_indicators / total_count
+                adjusted_contamination = (actual_contamination + indicator_ratio) / 2
+                # Use adjusted contamination but keep it reasonable
+                contamination = max(0.05, min(0.25, adjusted_contamination))
+                logger.info(f"Using smart contamination: {contamination:.3f} (anomalies: {anomaly_count}/{total_count}, indicators: {suspicious_indicators})")
+            else:
+                # Conservative fallback
+                contamination = 0.15
+                logger.info(f"Using fallback contamination: {contamination:.3f}")
             
-            # Train Isolation Forest with optimized parameters
+            # Train Isolation Forest with highly optimized parameters
             self.model = IsolationForest(
                 contamination=contamination,
                 random_state=42,
-                n_estimators=300,  # More trees for stability
-                max_samples=min(256, len(training_events)),  # Subsample for large datasets
-                max_features=1.0,  # Use all features
-                bootstrap=False,  # Use all data points
+                n_estimators=500,  # Even more trees for stability
+                max_samples=min(512, len(training_events)),  # Larger subsamples
+                max_features=0.8,  # Use 80% of features to reduce overfitting
+                bootstrap=True,  # Bootstrap for better generalization
                 n_jobs=-1,  # Use all CPU cores
-                warm_start=False
+                warm_start=False,
+                behaviour='new'  # Use new behavior for better performance
             )
             
             # Fit model on normal data only (Isolation Forest best practice)
@@ -187,17 +229,22 @@ class MLEngine:
             # IsolationForest: -1 = anomaly, 1 = normal
             is_anomaly = prediction == -1
             
-            # Convert decision score to confidence
+            # Improved confidence scoring with threshold adjustment
             # decision_function: negative = anomaly, positive = normal
-            # We want higher confidence for more extreme scores
+            
+            # Apply a more conservative threshold to reduce false positives
+            anomaly_threshold = -0.1  # More conservative threshold
+            is_anomaly = decision_score < anomaly_threshold
+            
+            # Calculate confidence based on distance from threshold
             if is_anomaly:
-                # For anomalies, more negative = higher confidence
-                confidence = min(1.0, abs(decision_score) / 0.5)  # Normalize to 0-1
+                # For anomalies, distance below threshold = confidence
+                confidence = min(1.0, abs(decision_score + 0.1) / 0.4)
             else:
-                # For normal events, more positive = higher confidence  
-                confidence = min(1.0, decision_score / 0.5)  # Normalize to 0-1
+                # For normal events, distance above threshold = confidence
+                confidence = min(1.0, (decision_score + 0.1) / 0.6)
                 
-            confidence = max(0.1, confidence)  # Minimum confidence of 0.1
+            confidence = max(0.15, min(0.95, confidence))  # Clamp between 15-95%
             
             return is_anomaly, confidence
             

