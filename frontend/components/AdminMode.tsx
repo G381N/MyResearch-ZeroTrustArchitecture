@@ -158,13 +158,28 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
   const fetchPerformanceMetrics = async () => {
     try {
       setIsLoading(true)
+      setError(null) // Clear any previous errors
       const response = await adminAPI.performanceMetrics()
-      setPerformanceMetrics(response.data)
-      setShowMetrics(true)
+      
+      // Validate response structure
+      if (response.data && typeof response.data === 'object') {
+        setPerformanceMetrics(response.data)
+        setShowMetrics(true)
+      } else {
+        setError('Invalid performance metrics data received')
+      }
     } catch (err: any) {
-      const errorMessage = typeof err.response?.data?.detail === 'string' 
-        ? err.response.data.detail 
-        : 'Failed to fetch performance metrics'
+      console.error('Performance metrics error:', err)
+      let errorMessage = 'Failed to fetch performance metrics'
+      
+      if (err.response?.data) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail
+        } else if (typeof err.response.data.message === 'string') {
+          errorMessage = err.response.data.message
+        }
+      }
+      
       setError(errorMessage)
     } finally {
       setIsLoading(false)
@@ -373,7 +388,7 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
               </button>
             </div>
             <p className="text-sm text-muted-foreground mt-2">
-              {performanceMetrics.metadata.note}
+              {performanceMetrics.metadata?.note || 'Performance metrics based on system data and admin feedback.'}
             </p>
           </div>
           
@@ -382,19 +397,19 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div className="bg-muted/50 rounded-lg p-4">
                 <div className="text-2xl font-bold text-blue-500">
-                  {(performanceMetrics.overall.precision * 100).toFixed(1)}%
+                  {((performanceMetrics.overall?.precision || 0) * 100).toFixed(1)}%
                 </div>
                 <div className="text-sm text-muted-foreground">Overall Precision</div>
               </div>
               <div className="bg-muted/50 rounded-lg p-4">
                 <div className="text-2xl font-bold text-green-500">
-                  {(performanceMetrics.overall.recall * 100).toFixed(1)}%
+                  {((performanceMetrics.overall?.recall || 0) * 100).toFixed(1)}%
                 </div>
                 <div className="text-sm text-muted-foreground">Overall Recall</div>
               </div>
               <div className="bg-muted/50 rounded-lg p-4">
                 <div className="text-2xl font-bold text-purple-500">
-                  {(performanceMetrics.overall.f1_score * 100).toFixed(1)}%
+                  {((performanceMetrics.overall?.f1_score || 0) * 100).toFixed(1)}%
                 </div>
                 <div className="text-sm text-muted-foreground">Overall F1-Score</div>
               </div>
@@ -413,27 +428,35 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(performanceMetrics.attack_categories).map(([category, metrics]) => (
-                    <tr key={category} className="border-b border-border hover:bg-muted/50">
-                      <td className="p-3 font-medium">{category}</td>
-                      <td className="p-3 text-center">
-                        <span className="inline-block px-2 py-1 rounded bg-blue-100 text-blue-800">
-                          {(metrics.precision * 100).toFixed(1)}%
-                        </span>
+                  {performanceMetrics.attack_categories && Object.keys(performanceMetrics.attack_categories).length > 0 ? (
+                    Object.entries(performanceMetrics.attack_categories).map(([category, metrics]) => (
+                      <tr key={category} className="border-b border-border hover:bg-muted/50">
+                        <td className="p-3 font-medium">{category}</td>
+                        <td className="p-3 text-center">
+                          <span className="inline-block px-2 py-1 rounded bg-blue-100 text-blue-800">
+                            {((metrics?.precision || 0) * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="inline-block px-2 py-1 rounded bg-green-100 text-green-800">
+                            {((metrics?.recall || 0) * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="inline-block px-2 py-1 rounded bg-purple-100 text-purple-800">
+                            {((metrics?.f1_score || 0) * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">{metrics?.total_detected || 0}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="text-center p-8 text-muted-foreground">
+                        No attack category data available yet. Generate some anomalies first.
                       </td>
-                      <td className="p-3 text-center">
-                        <span className="inline-block px-2 py-1 rounded bg-green-100 text-green-800">
-                          {(metrics.recall * 100).toFixed(1)}%
-                        </span>
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className="inline-block px-2 py-1 rounded bg-purple-100 text-purple-800">
-                          {(metrics.f1_score * 100).toFixed(1)}%
-                        </span>
-                      </td>
-                      <td className="p-3 text-center">{metrics.total_detected}</td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
@@ -443,11 +466,11 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
                   <div className="font-medium">Total Anomalies</div>
-                  <div className="text-muted-foreground">{performanceMetrics.overall.total_anomalies}</div>
+                  <div className="text-muted-foreground">{performanceMetrics.overall?.total_anomalies || 0}</div>
                 </div>
                 <div>
                   <div className="font-medium">Admin Corrections</div>
-                  <div className="text-muted-foreground">{performanceMetrics.overall.admin_corrections}</div>
+                  <div className="text-muted-foreground">{performanceMetrics.overall?.admin_corrections || 0}</div>
                 </div>
                 <div>
                   <div className="font-medium">Calculation Method</div>
@@ -456,7 +479,10 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
                 <div>
                   <div className="font-medium">Last Updated</div>
                   <div className="text-muted-foreground">
-                    {new Date(performanceMetrics.metadata.timestamp).toLocaleString()}
+                    {performanceMetrics.metadata?.timestamp 
+                      ? new Date(performanceMetrics.metadata.timestamp).toLocaleString()
+                      : 'Just now'
+                    }
                   </div>
                 </div>
               </div>
