@@ -90,6 +90,9 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
   const [showExitConfirm, setShowExitConfirm] = useState(false)
   const [showMetrics, setShowMetrics] = useState(false)
   const [testMode, setTestMode] = useState(false)
+  const [modelTesting, setModelTesting] = useState(false)
+  const [testResults, setTestResults] = useState(null)
+  const [showTestResults, setShowTestResults] = useState(false)
 
   // Handle WebSocket messages
   useWebSocketMessage(websocket, 'anomaly', (data) => {
@@ -206,6 +209,28 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
       setError(errorMessage)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const runModelTest = async (trainPercentage: number = 80) => {
+    try {
+      setModelTesting(true)
+      setError(null)
+      
+      const response = await adminAPI.runModelTest({ train_percentage: trainPercentage })
+      
+      if (response.data) {
+        setTestResults(response.data)
+        setShowTestResults(true)
+        setSuccess(`Model testing completed. Accuracy: ${(response.data.overall.accuracy * 100).toFixed(1)}%`)
+      }
+    } catch (err: any) {
+      const errorMessage = typeof err.response?.data?.detail === 'string' 
+        ? err.response.data.detail 
+        : 'Failed to run model test'
+      setError(errorMessage)
+    } finally {
+      setModelTesting(false)
     }
   }
 
@@ -529,6 +554,171 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
           </div>
         </div>
       )}
+
+      {/* Model Testing Section */}
+      <div className="bg-card border border-border rounded-lg">
+        <div className="p-4 border-b border-border">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold">Model Accuracy Testing</h3>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => runModelTest(70)}
+                disabled={modelTesting || isLoading}
+                className="px-3 py-1 text-sm bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50"
+              >
+                {modelTesting ? 'Testing...' : 'Test 70/30 Split'}
+              </button>
+              <button
+                onClick={() => runModelTest(80)}
+                disabled={modelTesting || isLoading}
+                className="px-3 py-1 text-sm bg-indigo-500 text-white rounded-md hover:bg-indigo-600 disabled:opacity-50"
+              >
+                {modelTesting ? 'Testing...' : 'Test 80/20 Split'}
+              </button>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground mt-2">
+            Split your existing data into training and testing sets to get real accuracy metrics
+          </p>
+        </div>
+
+        {showTestResults && testResults && (
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-md font-semibold">Test Results</h4>
+              <button
+                onClick={() => setShowTestResults(false)}
+                className="px-2 py-1 text-sm bg-muted text-muted-foreground rounded-md hover:bg-muted/80"
+              >
+                Hide
+              </button>
+            </div>
+
+            {/* Test Overview */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="text-lg font-bold text-blue-600">
+                  {testResults.data_split?.training_size || 0}
+                </div>
+                <div className="text-sm text-blue-800">Training Events</div>
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <div className="text-lg font-bold text-green-600">
+                  {testResults.data_split?.testing_size || 0}
+                </div>
+                <div className="text-sm text-green-800">Testing Events</div>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <div className="text-lg font-bold text-purple-600">
+                  {((testResults.overall?.accuracy || 0) * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-purple-800">Overall Accuracy</div>
+              </div>
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <div className="text-lg font-bold text-orange-600">
+                  {((testResults.overall?.f1_score || 0) * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-orange-800">F1 Score</div>
+              </div>
+            </div>
+
+            {/* Detailed Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-muted/30 rounded-lg p-4">
+                <div className="text-lg font-bold text-blue-600">
+                  {((testResults.overall?.precision || 0) * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-muted-foreground">Precision</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  True Positives / (True Positives + False Positives)
+                </div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-4">
+                <div className="text-lg font-bold text-green-600">
+                  {((testResults.overall?.recall || 0) * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-muted-foreground">Recall</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  True Positives / (True Positives + False Negatives)
+                </div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-4">
+                <div className="text-lg font-bold text-purple-600">
+                  {testResults.confusion_matrix?.false_positive_rate ? 
+                    (testResults.confusion_matrix.false_positive_rate * 100).toFixed(1) : 0}%
+                </div>
+                <div className="text-sm text-muted-foreground">False Positive Rate</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  False Positives / (False Positives + True Negatives)
+                </div>
+              </div>
+            </div>
+
+            {/* Confusion Matrix */}
+            {testResults.confusion_matrix && (
+              <div className="bg-muted/20 rounded-lg p-4">
+                <h5 className="font-semibold mb-3">Confusion Matrix</h5>
+                <div className="grid grid-cols-2 gap-2 max-w-md">
+                  <div className="bg-green-100 border border-green-300 rounded p-3 text-center">
+                    <div className="font-bold text-green-800">
+                      {testResults.confusion_matrix.true_negatives}
+                    </div>
+                    <div className="text-xs text-green-700">True Negatives</div>
+                    <div className="text-xs text-green-600">Correctly identified normal</div>
+                  </div>
+                  <div className="bg-red-100 border border-red-300 rounded p-3 text-center">
+                    <div className="font-bold text-red-800">
+                      {testResults.confusion_matrix.false_positives}
+                    </div>
+                    <div className="text-xs text-red-700">False Positives</div>
+                    <div className="text-xs text-red-600">Normal flagged as anomaly</div>
+                  </div>
+                  <div className="bg-red-100 border border-red-300 rounded p-3 text-center">
+                    <div className="font-bold text-red-800">
+                      {testResults.confusion_matrix.false_negatives}
+                    </div>
+                    <div className="text-xs text-red-700">False Negatives</div>
+                    <div className="text-xs text-red-600">Anomaly missed</div>
+                  </div>
+                  <div className="bg-green-100 border border-green-300 rounded p-3 text-center">
+                    <div className="font-bold text-green-800">
+                      {testResults.confusion_matrix.true_positives}
+                    </div>
+                    <div className="text-xs text-green-700">True Positives</div>
+                    <div className="text-xs text-green-600">Correctly identified anomaly</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Test Info */}
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                  <div className="font-medium">Train/Test Split</div>
+                  <div className="text-muted-foreground">
+                    {testResults.data_split?.train_percentage || 0}% / {testResults.data_split?.test_percentage || 0}%
+                  </div>
+                </div>
+                <div>
+                  <div className="font-medium">Test Method</div>
+                  <div className="text-muted-foreground">
+                    {testResults.metadata?.method || 'Random Split'}
+                  </div>
+                </div>
+                <div>
+                  <div className="font-medium">Tested At</div>
+                  <div className="text-muted-foreground">
+                    {testResults.metadata?.timestamp ? 
+                      new Date(testResults.metadata.timestamp).toLocaleString() : 'Now'
+                    }
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Anomalies Table */}
       <div className="bg-card border border-border rounded-lg">

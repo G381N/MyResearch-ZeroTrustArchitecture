@@ -436,6 +436,132 @@ async def toggle_test_mode(data: dict):
             detail=f"Failed to toggle test mode: {str(e)}"
         )
 
+@router.post("/run_model_test")
+async def run_model_test(data: dict, db: Session = Depends(get_db)):
+    """Run model accuracy test with train/test data split"""
+    try:
+        train_percentage = data.get('train_percentage', 80)
+        test_percentage = 100 - train_percentage
+        
+        # Get all events from the database
+        events = db.query(Event).all()
+        
+        if len(events) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Need at least 10 events to run model test"
+            )
+        
+        # Convert events to ML format
+        event_data = []
+        labels = []
+        
+        for event in events:
+            event_dict = {
+                'timestamp': event.timestamp.isoformat(),
+                'event_type': event.event_type,
+                'metadata': event.event_metadata or {}
+            }
+            event_data.append(event_dict)
+            # Use admin feedback if available, otherwise use original is_anomaly flag
+            labels.append(1 if event.is_anomaly else 0)
+        
+        # Split data
+        from sklearn.model_selection import train_test_split
+        import numpy as np
+        
+        # Create indices for splitting
+        indices = list(range(len(event_data)))
+        train_indices, test_indices = train_test_split(
+            indices, 
+            test_size=test_percentage/100, 
+            random_state=42,
+            stratify=labels if len(set(labels)) > 1 else None
+        )
+        
+        # Split events and labels
+        train_events = [event_data[i] for i in train_indices]
+        test_events = [event_data[i] for i in test_indices]
+        train_labels = [labels[i] for i in train_indices]
+        test_labels = [labels[i] for i in test_indices]
+        
+        # Train new model on training data
+        from ml_engine import MLEngine
+        test_ml_engine = MLEngine()
+        
+        # Extract features for training
+        train_features = test_ml_engine._extract_features(train_events)
+        test_features = test_ml_engine._extract_features(test_events)
+        
+        # Train the model
+        test_ml_engine.train(train_events, force_retrain=True)
+        
+        # Make predictions on test set
+        predictions = test_ml_engine.predict_batch(test_events)
+        
+        # Calculate metrics
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+        
+        # Convert predictions (anomaly scores) to binary predictions
+        # Predictions > 0 are anomalies (isolation forest returns negative scores for normal data)
+        binary_predictions = [1 if pred > 0 else 0 for pred in predictions]
+        
+        # Calculate all metrics
+        accuracy = accuracy_score(test_labels, binary_predictions)
+        precision = precision_score(test_labels, binary_predictions, zero_division=0)
+        recall = recall_score(test_labels, binary_predictions, zero_division=0)
+        f1 = f1_score(test_labels, binary_predictions, zero_division=0)
+        
+        # Confusion matrix
+        tn, fp, fn, tp = confusion_matrix(test_labels, binary_predictions).ravel()
+        
+        # Calculate additional metrics
+        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0  # False Positive Rate
+        fnr = fn / (fn + tp) if (fn + tp) > 0 else 0  # False Negative Rate
+        
+        logger.info(f"Model test completed: Accuracy={accuracy:.3f}, Precision={precision:.3f}, Recall={recall:.3f}")
+        
+        return {
+            "overall": {
+                "accuracy": accuracy,
+                "precision": precision,
+                "recall": recall,
+                "f1_score": f1
+            },
+            "confusion_matrix": {
+                "true_positives": int(tp),
+                "true_negatives": int(tn), 
+                "false_positives": int(fp),
+                "false_negatives": int(fn),
+                "false_positive_rate": fpr,
+                "false_negative_rate": fnr
+            },
+            "data_split": {
+                "training_size": len(train_events),
+                "testing_size": len(test_events),
+                "train_percentage": train_percentage,
+                "test_percentage": test_percentage,
+                "total_events": len(events)
+            },
+            "predictions": {
+                "total_predictions": len(binary_predictions),
+                "predicted_anomalies": sum(binary_predictions),
+                "actual_anomalies": sum(test_labels)
+            },
+            "metadata": {
+                "method": "Random train/test split with stratification",
+                "timestamp": datetime.now().isoformat(),
+                "model_type": "Isolation Forest"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error running model test: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to run model test: {str(e)}"
+        )
+
 @router.post("/exit")
 async def exit_system():
     """Exit the entire system"""

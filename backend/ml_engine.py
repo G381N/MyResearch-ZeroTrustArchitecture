@@ -223,6 +223,27 @@ class MLEngine:
             logger.error(f"Failed to load model: {e}")
             return False
     
+    def predict_batch(self, events: List[Dict[str, Any]]) -> List[float]:
+        """Predict anomaly scores for a batch of events"""
+        if not self.is_trained or self.model is None:
+            raise ValueError("Model must be trained before making predictions")
+        
+        try:
+            # Extract features
+            features = self._extract_features(events)
+            
+            # Scale features
+            scaled_features = self.scaler.transform(features)
+            
+            # Get anomaly scores (negative for normal, positive for anomalies)
+            scores = self.model.decision_function(scaled_features)
+            
+            return scores.tolist()
+            
+        except Exception as e:
+            logger.error(f"Error in batch prediction: {e}")
+            raise
+
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the current model"""
         return {

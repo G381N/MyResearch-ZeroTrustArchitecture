@@ -68,6 +68,7 @@ export const adminAPI = {
   systemStatus: () => api.get('/api/admin/system_status'),
   performanceMetrics: () => api.get('/api/admin/performance_metrics'),
   toggleTestMode: (enabled: boolean) => api.post('/api/admin/toggle_test_mode', { enabled }),
+  runModelTest: (params: any) => api.post('/api/admin/run_model_test', params),
 }
 
 // Health check
