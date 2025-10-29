@@ -276,11 +276,13 @@ async def get_admin_stats(db: Session = Depends(get_db)):
 async def get_system_status():
     """Get current system status"""
     try:
+        from config import settings
         return {
             "training_active": current_training_session is not None,
             "live_active": current_live_session is not None,
             "model_trained": ml_engine.is_trained,
             "trust_score": trust_scorer.get_current_score(),
+            "test_mode": settings.TEST_MODE,
             "timestamp": datetime.now().isoformat()
         }
         
@@ -407,6 +409,31 @@ async def get_performance_metrics(db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to calculate performance metrics: {str(e)}"
+        )
+
+@router.post("/toggle_test_mode")
+async def toggle_test_mode(data: dict):
+    """Toggle test mode to ignore time-based anomaly detection"""
+    try:
+        enabled = data.get('enabled', False)
+        
+        # Set global test mode flag
+        from config import settings
+        settings.TEST_MODE = enabled
+        
+        logger.info(f"Test mode {'enabled' if enabled else 'disabled'}")
+        
+        return {
+            "message": f"Test mode {'enabled' if enabled else 'disabled'}",
+            "test_mode": enabled,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error toggling test mode: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to toggle test mode: {str(e)}"
         )
 
 @router.post("/exit")

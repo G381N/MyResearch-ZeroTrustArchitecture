@@ -89,6 +89,7 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [showExitConfirm, setShowExitConfirm] = useState(false)
   const [showMetrics, setShowMetrics] = useState(false)
+  const [testMode, setTestMode] = useState(false)
 
   // Handle WebSocket messages
   useWebSocketMessage(websocket, 'anomaly', (data) => {
@@ -137,7 +138,8 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
   const fetchAnomalies = async () => {
     try {
       setIsLoading(true)
-      const response = await adminAPI.anomalies({ resolved: false })
+      // Fetch all anomalies (both resolved and unresolved) so admin can see everything
+      const response = await adminAPI.anomalies({})
       setAnomalies(response.data)
     } catch (err: any) {
       setError('Failed to fetch anomalies')
@@ -186,6 +188,27 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
     }
   }
 
+  const toggleTestMode = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+      
+      const response = await adminAPI.toggleTestMode(!testMode)
+      
+      if (response.data) {
+        setTestMode(!testMode)
+        setSuccess(`Test mode ${!testMode ? 'enabled' : 'disabled'}. ${!testMode ? 'Time-based anomaly detection disabled.' : 'Time-based anomaly detection enabled.'}`)
+      }
+    } catch (err: any) {
+      const errorMessage = typeof err.response?.data?.detail === 'string' 
+        ? err.response.data.detail 
+        : 'Failed to toggle test mode'
+      setError(errorMessage)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const markAsNormal = async (anomalyId: number) => {
     try {
       setIsLoading(true)
@@ -195,8 +218,12 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
       
       if (response.data) {
         setSuccess(`Anomaly ${anomalyId} marked as normal. Trust restored: ${response.data.trust_restored}`)
-        // Remove from local list
-        setAnomalies(prev => prev.filter(anomaly => anomaly.id !== anomalyId))
+        // Update the anomaly in local list to show as resolved instead of removing it
+        setAnomalies(prev => prev.map(anomaly => 
+          anomaly.id === anomalyId 
+            ? { ...anomaly, is_resolved: true, resolved_by: 'admin', resolved_at: new Date().toISOString() }
+            : anomaly
+        ))
       }
     } catch (err: any) {
       const errorMessage = typeof err.response?.data?.detail === 'string' 
@@ -251,9 +278,21 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
     }
   }
 
+  const fetchTestModeStatus = async () => {
+    try {
+      const response = await adminAPI.systemStatus()
+      if (response.data && response.data.test_mode !== undefined) {
+        setTestMode(response.data.test_mode)
+      }
+    } catch (err) {
+      console.error('Error fetching test mode status:', err)
+    }
+  }
+
   useEffect(() => {
     fetchAnomalies()
     fetchStats()
+    fetchTestModeStatus()
     
     const interval = setInterval(() => {
       fetchStats()
@@ -303,7 +342,7 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
             {isLoading ? 'Loading...' : 'View Performance Metrics'}
           </button>
           <div className="text-sm text-muted-foreground">
-            {anomalies.length} unresolved anomalies
+            {anomalies.filter(a => !a.is_resolved).length} unresolved / {anomalies.length} total anomalies
           </div>
         </div>
       </div>
@@ -527,13 +566,18 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
                 </tr>
               ) : (
                 anomalies.map((anomaly) => (
-                  <tr key={anomaly.id} className="border-b border-border hover:bg-muted/50">
+                  <tr key={anomaly.id} className={`border-b border-border hover:bg-muted/50 ${anomaly.is_resolved ? 'opacity-50 bg-muted/30' : ''}`}>
                     <td className="p-4">
-                      <div className="font-medium">
-                        {anomaly.event.metadata?.process_name || anomaly.event.metadata?.command || 'Unknown'}
+                      <div className={`font-medium ${anomaly.is_resolved ? 'line-through text-muted-foreground' : ''}`}>
+                        {anomaly.event?.metadata?.process_name || anomaly.event?.metadata?.command || 'Unknown'}
                       </div>
                       <div className="text-sm text-muted-foreground">
-                        {anomaly.event.metadata?.user_id || 'System'}
+                        {anomaly.event?.metadata?.user_id || 'System'}
+                        {anomaly.is_resolved && (
+                          <span className="ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                            Marked as Normal by Admin
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="p-4">
@@ -563,14 +607,21 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
                       {formatTimestamp(anomaly.created_at)}
                     </td>
                     <td className="p-4">
-                      <button
-                        onClick={() => markAsNormal(anomaly.id)}
-                        disabled={isLoading}
-                        className="flex items-center space-x-1 px-3 py-1 text-sm bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50"
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                        <span>Mark Normal</span>
-                      </button>
+                      {anomaly.is_resolved ? (
+                        <div className="flex items-center space-x-1 px-3 py-1 text-sm bg-green-100 text-green-700 rounded-md">
+                          <CheckCircle className="h-4 w-4" />
+                          <span>Marked Normal</span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => markAsNormal(anomaly.id)}
+                          disabled={isLoading}
+                          className="flex items-center space-x-1 px-3 py-1 text-sm bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50"
+                        >
+                          <CheckCircle className="h-4 w-4" />
+                          <span>Mark Normal</span>
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -581,7 +632,38 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
       </div>
 
       {/* System Controls */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Test Mode Toggle */}
+        <div className="bg-card border border-border rounded-lg p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">Test Mode</h3>
+              <p className="text-sm text-muted-foreground">
+                Disable time-based anomaly detection for testing
+              </p>
+            </div>
+            
+            <button
+              onClick={toggleTestMode}
+              disabled={isLoading}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                testMode 
+                  ? 'bg-orange-500 text-white hover:bg-orange-600' 
+                  : 'bg-green-500 text-white hover:bg-green-600'
+              } disabled:opacity-50`}
+            >
+              {testMode ? 'Disable Test Mode' : 'Enable Test Mode'}
+            </button>
+          </div>
+          
+          {testMode && (
+            <div className="mt-3 p-3 bg-orange-100 border border-orange-200 rounded-md">
+              <p className="text-sm text-orange-800">
+                ⚠️ Test mode enabled. Time-based anomaly detection is disabled.
+              </p>
+            </div>
+          )}
+        </div>
         {/* System Reset */}
         <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center justify-between">
