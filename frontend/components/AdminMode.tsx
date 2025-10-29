@@ -93,6 +93,7 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
   const [modelTesting, setModelTesting] = useState(false)
   const [testResults, setTestResults] = useState(null)
   const [showTestResults, setShowTestResults] = useState(false)
+  const [generatingTestData, setGeneratingTestData] = useState(false)
 
   // Handle WebSocket messages
   useWebSocketMessage(websocket, 'anomaly', (data) => {
@@ -231,6 +232,29 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
       setError(errorMessage)
     } finally {
       setModelTesting(false)
+    }
+  }
+
+  const generateTestData = async () => {
+    try {
+      setGeneratingTestData(true)
+      setError(null)
+      
+      const response = await adminAPI.generateTestData()
+      
+      if (response.data) {
+        setSuccess(`Generated ${response.data.total_events} test events (${response.data.normal_events} normal, ${response.data.anomaly_events} anomalies)`)
+        // Refresh stats and anomalies after generating data
+        fetchStats()
+        fetchAnomalies()
+      }
+    } catch (err: any) {
+      const errorMessage = typeof err.response?.data?.detail === 'string' 
+        ? err.response.data.detail 
+        : 'Failed to generate test data'
+      setError(errorMessage)
+    } finally {
+      setGeneratingTestData(false)
     }
   }
 
@@ -561,6 +585,13 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold">Model Accuracy Testing</h3>
             <div className="flex items-center space-x-3">
+              <button
+                onClick={generateTestData}
+                disabled={generatingTestData || isLoading}
+                className="px-3 py-1 text-sm bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50"
+              >
+                {generatingTestData ? 'Generating...' : 'Generate Test Data'}
+              </button>
               <button
                 onClick={() => runModelTest(70)}
                 disabled={modelTesting || isLoading}

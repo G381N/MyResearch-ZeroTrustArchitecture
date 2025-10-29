@@ -571,6 +571,132 @@ async def run_model_test(data: dict, db: Session = Depends(get_db)):
             detail=f"Failed to run model test: {str(e)}"
         )
 
+@router.post("/generate_test_data")
+async def generate_test_data(db: Session = Depends(get_db)):
+    """Generate realistic test data for training and testing"""
+    try:
+        from datetime import datetime, timedelta
+        import random
+        
+        # Clear existing data first for clean test
+        db.query(Anomaly).delete()
+        db.query(Event).delete()
+        db.query(TrainingData).delete()
+        
+        events_created = []
+        anomalies_created = []
+        
+        # Generate normal user behavior patterns (80% of data)
+        normal_event_types = [
+            ('login', {'user_id': 'user1', 'auth_success': True, 'source_ip': '192.168.1.100'}),
+            ('file_change', {'user_id': 'user1', 'file_path': '/home/user1/document.txt', 'action': 'modify'}),
+            ('process_start', {'user_id': 'user1', 'process_name': 'browser', 'pid': random.randint(1000, 9999)}),
+            ('network_connection', {'user_id': 'user1', 'destination': 'google.com', 'port': 443}),
+            ('process_end', {'user_id': 'user1', 'process_name': 'browser', 'pid': random.randint(1000, 9999)}),
+            ('logout', {'user_id': 'user1', 'session_duration': random.randint(1800, 7200)}),
+        ]
+        
+        # Generate 200 normal events
+        base_time = datetime.now() - timedelta(days=7)
+        
+        for i in range(200):
+            event_type, metadata = random.choice(normal_event_types)
+            
+            # Vary timing to create realistic patterns
+            time_offset = timedelta(
+                days=random.randint(0, 6),
+                hours=random.randint(8, 18),  # Business hours mostly
+                minutes=random.randint(0, 59),
+                seconds=random.randint(0, 59)
+            )
+            
+            event = Event(
+                timestamp=base_time + time_offset,
+                event_type=event_type,
+                event_metadata=metadata.copy(),
+                is_anomaly=False,
+                trust_impact=0,
+                session_id=1  # Training session
+            )
+            
+            db.add(event)
+            events_created.append(event)
+        
+        # Generate anomalous behavior patterns (20% of data)
+        anomaly_patterns = [
+            # Failed authentications
+            ('auth_failure', {'user_id': 'attacker', 'auth_success': False, 'source_ip': '10.0.0.50', 'attempts': random.randint(3, 10)}),
+            # Suspicious commands
+            ('sudo_command', {'user_id': 'user1', 'command': 'rm -rf /', 'elevation': 'sudo'}),
+            # Unusual network access
+            ('network_connection', {'user_id': 'user1', 'destination': 'suspicious-domain.com', 'port': 6666}),
+            # File tampering
+            ('file_change', {'user_id': 'user1', 'file_path': '/etc/passwd', 'action': 'modify'}),
+            # Process injection attempts
+            ('process_start', {'user_id': 'user1', 'process_name': 'backdoor.exe', 'pid': random.randint(1000, 9999)}),
+            # Off-hours access
+            ('login', {'user_id': 'user1', 'auth_success': True, 'source_ip': '192.168.1.100', 'time': '03:00:00'}),
+        ]
+        
+        # Generate 50 anomalous events
+        for i in range(50):
+            event_type, metadata = random.choice(anomaly_patterns)
+            
+            # Anomalies at random times, including off-hours
+            time_offset = timedelta(
+                days=random.randint(0, 6),
+                hours=random.randint(0, 23),
+                minutes=random.randint(0, 59),
+                seconds=random.randint(0, 59)
+            )
+            
+            # Create anomalous event
+            event = Event(
+                timestamp=base_time + time_offset,
+                event_type=event_type,
+                event_metadata=metadata.copy(),
+                is_anomaly=True,
+                trust_impact=random.randint(-25, -5),  # Negative trust impact
+                session_id=2  # Live session
+            )
+            
+            db.add(event)
+            db.flush()  # Get the ID
+            
+            # Create corresponding anomaly record
+            anomaly = Anomaly(
+                event_id=event.id,
+                session_id=2,
+                confidence_score=random.uniform(0.7, 0.95),  # High confidence for real anomalies
+                is_resolved=False,
+                created_at=event.timestamp
+            )
+            
+            db.add(anomaly)
+            anomalies_created.append(anomaly)
+        
+        db.commit()
+        
+        logger.info(f"Generated {len(events_created)} events and {len(anomalies_created)} anomalies")
+        
+        return {
+            "message": "Test data generated successfully",
+            "total_events": len(events_created),
+            "normal_events": 200,
+            "anomaly_events": 50,
+            "anomalies_created": len(anomalies_created),
+            "data_quality": "Realistic user behavior patterns with genuine anomalies",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating test data: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate test data: {str(e)}"
+        )
+
 @router.post("/exit")
 async def exit_system():
     """Exit the entire system"""
