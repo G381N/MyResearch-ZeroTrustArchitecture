@@ -82,11 +82,7 @@ sessions.
 and trust score management.
 \end{itemize}
 
-We compare our system to representative ZTA approaches,
-discuss the limitations of existing solutions, and demonstrate
-how our architecture addresses operational gaps such as
-session persistence, adaptive trust scoring, and resilient anomaly
-detection. The data present in the paper are organized as follows:  
+This paper compares the proposed system to representative ZTA approaches, discusses the limitations of existing solutions, and demonstrates how the architecture addresses operational gaps such as session persistence, adaptive trust scoring, and resilient anomaly detection. The data present in the paper are organized as follows:  
 SectionII reviews related work and existing ZTA systems;
 Section III presents a comparative analysis and identifies
 gaps; Section IV details the proposed system architecture
@@ -163,7 +159,7 @@ modular, scalable, and practical for deployment across diverse
 organizational contexts.
 
 \section{Comparative Analysis and Identified Gaps}
-Our analysis of existing ZTA systems reveals several critical operational and technical gaps that limit their effectiveness in dynamic enterprise environments. Table~\ref{tab:existing_gaps} summarizes the key limitations across different categories of ZTA implementations.
+An analysis of existing ZTA systems reveals several critical operational and technical gaps that limit their effectiveness in dynamic enterprise environments. Table~\ref{tab:existing_gaps} summarizes the key limitations across different categories of ZTA implementations.
 
 \begin{table}[t]
 \centering
@@ -201,7 +197,7 @@ require extensive infrastructure changes and specialized expertise, creating bar
 security resources or legacy systems.
 
 \section{Proposed System Architecture}
-To address the identified gaps, we propose an AI-driven, event-based Zero Trust Architecture that integrates behavioral monitoring, dynamic trust scoring, and adaptive anomaly detection. The system operates across three distinct modes—Training, Live, and Admin—to provide comprehensive security coverage while maintaining operational simplicity.
+To address the identified gaps, this paper proposes an AI-driven, event-based Zero Trust Architecture that integrates behavioral monitoring, dynamic trust scoring, and adaptive anomaly detection. The system operates across three distinct modes—Training, Live, and Admin—to provide comprehensive security coverage while maintaining operational simplicity.
 
 \subsection{System Components}
 Figure~\ref{fig:arch} illustrates the high-level architecture of the proposed system. The core components include:
@@ -428,7 +424,7 @@ The system demonstrates significant improvements over
 existing ZTA implementations:
 
 \subsubsection{Adaptive Trust Management}
-Unlike static policy systems, our dynamic trust scoring reduces false alerts by 60%
+Unlike static policy systems, this system's dynamic trust scoring reduces false alerts by 60%
 while maintaining high detection sensitivity. The trust score
 adaptation allows the system to:
 \begin{itemize}[leftmargin=*]
@@ -457,11 +453,11 @@ Compared to enterprise ZTA solutions, the system achieves:
 
 
 \subsection{Comparative Advantages}
-Our implementation addresses critical gaps in existing ZTA
+This implementation addresses critical gaps in existing ZTA
 systems while maintaining practical deployment characteristics:
 
 \subsubsection{Versus Static Policy Systems}
-Traditional ZTA implementations rely on fixed access policies and binary decisions. Our system provides:
+Traditional ZTA implementations rely on fixed access policies and binary decisions. This system provides:
 \begin{itemize}[leftmargin=*]
   \item Dynamic trust scoring that adapts to changing user behavior patterns
   \item Graduated response mechanisms instead of simple allow/deny decisions
@@ -469,7 +465,7 @@ Traditional ZTA implementations rely on fixed access policies and binary decisio
 \end{itemize}
 
 \subsubsection{Versus Cloud-based Solutions} 
-Enterprise cloud ZTA offerings often require extensive infrastructure changes. Our system offers:
+Enterprise cloud ZTA offerings often require extensive infrastructure changes. This system offers:
 \begin{itemize}[leftmargin=*]
   \item A lightweight deployment method that is suitable for various organizational contexts.
   \item Local data processing addressing privacy and compliance concerns
@@ -477,7 +473,7 @@ Enterprise cloud ZTA offerings often require extensive infrastructure changes. O
 \end{itemize}
 
 \subsubsection{Versus Academic Prototypes}
-Research prototypes typically lack operational hardening. Our implementation provides:
+Research prototypes typically lack operational hardening. This implementation provides:
 \begin{itemize}[leftmargin=*]
   \item Session persistence and recovery across system restarts
   \item Effective error handling and management of concurrent operations  
@@ -496,14 +492,14 @@ Table~\ref{tab:comprehensive_comparison} offers a comprehensive comparison of ke
 Static Policy ZTA & No & No & Limited & Low & High & High \\
 Cloud Enterprise & Limited & Yes & Yes & High & Low & Low \\
 Academic Prototype & Yes & No & Yes & Low & High & High \\
-\textbf{Our System} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} & \textbf{Moderate} & \textbf{High} & \textbf{High} \\
+	extbf{Proposed System} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} & \textbf{Moderate} & \textbf{High} & \textbf{High} \\
 \bottomrule
 \end{tabular}
 \label{tab:comprehensive_comparison}
 \end{table*}
 
 \subsection{Validation Methodology}
-We evaluated system effectiveness through comprehensive testing across three dimensions:
+System effectiveness was evaluated through comprehensive testing across three dimensions:
 
 \subsubsection{Functional Validation}
 \begin{itemize}[leftmargin=*]
@@ -561,7 +557,7 @@ security coverage while maintaining practical deployment
 characteristics.
 
 \subsection{Key Contributions}
-Our work contributes to the Zero Trust security domain in several important ways:
+This work contributes to the Zero Trust security domain in several important ways:
 
 \begin{itemize}[leftmargin=*]
   \item \textbf{Operational Innovation:} Session persistence and recovery
