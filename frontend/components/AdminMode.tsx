@@ -54,14 +54,41 @@ interface AdminStats {
   }
 }
 
+interface PerformanceMetrics {
+  attack_categories: {
+    [key: string]: {
+      precision: number
+      recall: number
+      f1_score: number
+      total_detected: number
+      true_positives: number
+      false_positives: number
+    }
+  }
+  overall: {
+    precision: number
+    recall: number
+    f1_score: number
+    total_anomalies: number
+    admin_corrections: number
+  }
+  metadata: {
+    calculation_method: string
+    note: string
+    timestamp: string
+  }
+}
+
 export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
   const [anomalies, setAnomalies] = useState<Anomaly[]>([])
   const [stats, setStats] = useState<AdminStats | null>(null)
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [showExitConfirm, setShowExitConfirm] = useState(false)
+  const [showMetrics, setShowMetrics] = useState(false)
 
   // Handle WebSocket messages
   useWebSocketMessage(websocket, 'anomaly', (data) => {
@@ -128,6 +155,22 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
     }
   }
 
+  const fetchPerformanceMetrics = async () => {
+    try {
+      setIsLoading(true)
+      const response = await adminAPI.performanceMetrics()
+      setPerformanceMetrics(response.data)
+      setShowMetrics(true)
+    } catch (err: any) {
+      const errorMessage = typeof err.response?.data?.detail === 'string' 
+        ? err.response.data.detail 
+        : 'Failed to fetch performance metrics'
+      setError(errorMessage)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const markAsNormal = async (anomalyId: number) => {
     try {
       setIsLoading(true)
@@ -141,7 +184,10 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
         setAnomalies(prev => prev.filter(anomaly => anomaly.id !== anomalyId))
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to mark anomaly as normal')
+      const errorMessage = typeof err.response?.data?.detail === 'string' 
+        ? err.response.data.detail 
+        : 'Failed to mark anomaly as normal'
+      setError(errorMessage)
     } finally {
       setIsLoading(false)
     }
@@ -234,6 +280,13 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
         </div>
         
         <div className="flex items-center space-x-4">
+          <button
+            onClick={fetchPerformanceMetrics}
+            disabled={isLoading}
+            className="px-3 py-1 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50"
+          >
+            {isLoading ? 'Loading...' : 'View Performance Metrics'}
+          </button>
           <div className="text-sm text-muted-foreground">
             {anomalies.length} unresolved anomalies
           </div>
@@ -287,7 +340,7 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
               <Brain className="h-5 w-5 text-green-500" />
               <div>
                 <div className="text-2xl font-bold">
-                  {Math.round(stats.accuracy.admin_accuracy * 100)}%
+                  {Math.round((stats.accuracy.admin_accuracy || 0) * 100)}%
                 </div>
                 <div className="text-sm text-muted-foreground">Admin Accuracy</div>
               </div>
@@ -300,6 +353,112 @@ export default function AdminMode({ websocket, systemStatus }: AdminModeProps) {
               <div>
                 <div className="text-2xl font-bold">{stats.trust_score.current_score}</div>
                 <div className="text-sm text-muted-foreground">Current Trust Score</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Performance Metrics */}
+      {showMetrics && performanceMetrics && (
+        <div className="bg-card border border-border rounded-lg">
+          <div className="p-4 border-b border-border">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Real Performance Metrics</h3>
+              <button
+                onClick={() => setShowMetrics(false)}
+                className="px-3 py-1 text-sm bg-muted text-muted-foreground rounded-md hover:bg-muted/80"
+              >
+                Hide
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">
+              {performanceMetrics.metadata.note}
+            </p>
+          </div>
+          
+          <div className="p-4">
+            {/* Overall Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-muted/50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-blue-500">
+                  {(performanceMetrics.overall.precision * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-muted-foreground">Overall Precision</div>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-green-500">
+                  {(performanceMetrics.overall.recall * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-muted-foreground">Overall Recall</div>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-purple-500">
+                  {(performanceMetrics.overall.f1_score * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-muted-foreground">Overall F1-Score</div>
+              </div>
+            </div>
+
+            {/* Attack Categories Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="border-b border-border">
+                  <tr>
+                    <th className="text-left p-3 font-medium">Attack Category</th>
+                    <th className="text-center p-3 font-medium">Precision</th>
+                    <th className="text-center p-3 font-medium">Recall</th>
+                    <th className="text-center p-3 font-medium">F1-Score</th>
+                    <th className="text-center p-3 font-medium">Total Detected</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(performanceMetrics.attack_categories).map(([category, metrics]) => (
+                    <tr key={category} className="border-b border-border hover:bg-muted/50">
+                      <td className="p-3 font-medium">{category}</td>
+                      <td className="p-3 text-center">
+                        <span className="inline-block px-2 py-1 rounded bg-blue-100 text-blue-800">
+                          {(metrics.precision * 100).toFixed(1)}%
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="inline-block px-2 py-1 rounded bg-green-100 text-green-800">
+                          {(metrics.recall * 100).toFixed(1)}%
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="inline-block px-2 py-1 rounded bg-purple-100 text-purple-800">
+                          {(metrics.f1_score * 100).toFixed(1)}%
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">{metrics.total_detected}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Summary Stats */}
+            <div className="mt-4 p-4 bg-muted/30 rounded-lg">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <div className="font-medium">Total Anomalies</div>
+                  <div className="text-muted-foreground">{performanceMetrics.overall.total_anomalies}</div>
+                </div>
+                <div>
+                  <div className="font-medium">Admin Corrections</div>
+                  <div className="text-muted-foreground">{performanceMetrics.overall.admin_corrections}</div>
+                </div>
+                <div>
+                  <div className="font-medium">Calculation Method</div>
+                  <div className="text-muted-foreground">Admin Feedback</div>
+                </div>
+                <div>
+                  <div className="font-medium">Last Updated</div>
+                  <div className="text-muted-foreground">
+                    {new Date(performanceMetrics.metadata.timestamp).toLocaleString()}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

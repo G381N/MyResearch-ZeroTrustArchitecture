@@ -66,6 +66,7 @@ export const adminAPI = {
   anomalies: (params?: any) => api.get('/api/admin/anomalies', { params }),
   stats: () => api.get('/api/admin/stats'),
   systemStatus: () => api.get('/api/admin/system_status'),
+  performanceMetrics: () => api.get('/api/admin/performance_metrics'),
 }
 
 // Health check

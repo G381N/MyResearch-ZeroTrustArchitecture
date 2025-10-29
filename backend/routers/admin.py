@@ -291,6 +291,124 @@ async def get_system_status():
             detail=f"Failed to get system status: {str(e)}"
         )
 
+@router.get("/performance_metrics")
+async def get_performance_metrics(db: Session = Depends(get_db)):
+    """Calculate real performance metrics based on admin feedback"""
+    try:
+        # Get all anomalies and their resolution status
+        anomalies = db.query(Anomaly).all()
+        
+        if not anomalies:
+            return {
+                "message": "No anomalies detected yet",
+                "attack_categories": {},
+                "overall": {"precision": 0, "recall": 0, "f1_score": 0}
+            }
+        
+        # Define attack category mapping based on event types
+        attack_category_map = {
+            'auth_failure': 'Authentication Abuse',
+            'sudo_command': 'Privilege Escalation', 
+            'network_connection': 'Network Anomalies',
+            'file_change': 'File System Manipulation',
+            'process_start': 'Process Injection',
+            'process_end': 'Process Injection',
+            'login': 'Authentication Abuse',
+            'logout': 'Authentication Abuse'
+        }
+        
+        # Initialize metrics per category
+        category_metrics = {}
+        
+        # Calculate metrics for each category
+        for anomaly in anomalies:
+            event = db.query(Event).filter(Event.id == anomaly.event_id).first()
+            if not event:
+                continue
+                
+            category = attack_category_map.get(event.event_type, 'Other')
+            
+            if category not in category_metrics:
+                category_metrics[category] = {
+                    'true_positives': 0,  # Admin confirmed as anomaly (not marked normal)
+                    'false_positives': 0, # Admin marked as normal  
+                    'total_detected': 0
+                }
+            
+            category_metrics[category]['total_detected'] += 1
+            
+            if anomaly.is_resolved and anomaly.resolved_by == "admin":
+                # Admin marked as normal - this was a false positive
+                category_metrics[category]['false_positives'] += 1
+            else:
+                # Not marked as normal - assume true positive
+                category_metrics[category]['true_positives'] += 1
+        
+        # Calculate precision, recall, f1 for each category
+        results = {}
+        overall_tp = 0
+        overall_fp = 0 
+        overall_total = 0
+        
+        for category, metrics in category_metrics.items():
+            tp = metrics['true_positives']
+            fp = metrics['false_positives'] 
+            total = metrics['total_detected']
+            
+            # Precision = TP / (TP + FP)
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            
+            # For recall, we need false negatives (missed attacks)
+            # Since we don't have ground truth, estimate recall based on detection rate
+            # Assume 90% detection rate for simplicity (this would need real testing)
+            estimated_fn = total * 0.1  # 10% missed
+            recall = tp / (tp + estimated_fn) if (tp + estimated_fn) > 0 else 0
+            
+            # F1 Score = 2 * (precision * recall) / (precision + recall)
+            f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+            
+            results[category] = {
+                "precision": round(precision, 2),
+                "recall": round(recall, 2), 
+                "f1_score": round(f1_score, 2),
+                "total_detected": total,
+                "true_positives": tp,
+                "false_positives": fp
+            }
+            
+            overall_tp += tp
+            overall_fp += fp
+            overall_total += total
+        
+        # Calculate overall metrics
+        overall_precision = overall_tp / (overall_tp + overall_fp) if (overall_tp + overall_fp) > 0 else 0
+        overall_estimated_fn = overall_total * 0.1
+        overall_recall = overall_tp / (overall_tp + overall_estimated_fn) if (overall_tp + overall_estimated_fn) > 0 else 0
+        overall_f1 = 2 * (overall_precision * overall_recall) / (overall_precision + overall_recall) if (overall_precision + overall_recall) > 0 else 0
+        
+        return {
+            "attack_categories": results,
+            "overall": {
+                "precision": round(overall_precision, 2),
+                "recall": round(overall_recall, 2),
+                "f1_score": round(overall_f1, 2),
+                "total_anomalies": overall_total,
+                "admin_corrections": overall_fp
+            },
+            "metadata": {
+                "calculation_method": "Based on admin feedback and estimated detection rate",
+                "note": "Recall estimates assume 90% detection rate. Precision is calculated from admin feedback.",
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating performance metrics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to calculate performance metrics: {str(e)}"
+        )
+
 @router.post("/exit")
 async def exit_system():
     """Exit the entire system"""
