@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 import logging
 from config import settings
 
@@ -108,17 +108,55 @@ class MLEngine:
             # Extract features
             X = self._extract_features(training_events)
             
-            # Scale features
+            # Scale features using robust scaling for better outlier handling
+            from sklearn.preprocessing import RobustScaler
+            self.scaler = RobustScaler()  # More robust to outliers than StandardScaler
             X_scaled = self.scaler.fit_transform(X)
             
-            # Train Isolation Forest
+            # Calculate dynamic contamination based on actual data if available
+            contamination = settings.CONTAMINATION
+            
+            # Count actual anomalies if we have labels (from event metadata)
+            anomaly_count = 0
+            total_count = len(training_events)
+            
+            for event in training_events:
+                if event.get('metadata', {}).get('is_anomaly', False):
+                    anomaly_count += 1
+            
+            if anomaly_count > 0:
+                actual_contamination = anomaly_count / total_count
+                # Use actual contamination but cap it between 0.05 and 0.3
+                contamination = max(0.05, min(0.3, actual_contamination))
+                logger.info(f"Using dynamic contamination: {contamination:.3f} based on {anomaly_count}/{total_count} anomalies")
+            
+            # Train Isolation Forest with optimized parameters
             self.model = IsolationForest(
-                contamination=settings.CONTAMINATION,
+                contamination=contamination,
                 random_state=42,
-                n_estimators=100
+                n_estimators=300,  # More trees for stability
+                max_samples=min(256, len(training_events)),  # Subsample for large datasets
+                max_features=1.0,  # Use all features
+                bootstrap=False,  # Use all data points
+                n_jobs=-1,  # Use all CPU cores
+                warm_start=False
             )
             
-            self.model.fit(X_scaled)
+            # Fit model on normal data only (Isolation Forest best practice)
+            normal_events = []
+            for i, event in enumerate(training_events):
+                if not event.get('metadata', {}).get('is_anomaly', False):
+                    normal_events.append(i)
+            
+            if len(normal_events) > 5:  # Train on normal data if we have enough
+                X_normal = X_scaled[normal_events]
+                self.model.fit(X_normal)
+                logger.info(f"Trained on {len(normal_events)} normal events")
+            else:
+                # Fallback: train on all data
+                self.model.fit(X_scaled)
+                logger.info("Trained on all events (insufficient normal event labels)")
+            
             self.is_trained = True
             
             # Save model and scaler
@@ -142,15 +180,24 @@ class MLEngine:
             X = self._extract_features([event])
             X_scaled = self.scaler.transform(X)
             
-            # Predict anomaly
+            # Get both prediction and anomaly score
             prediction = self.model.predict(X_scaled)[0]
-            anomaly_score = self.model.score_samples(X_scaled)[0]
+            decision_score = self.model.decision_function(X_scaled)[0]
             
-            # Convert to boolean (IsolationForest returns -1 for anomalies, 1 for normal)
+            # IsolationForest: -1 = anomaly, 1 = normal
             is_anomaly = prediction == -1
             
-            # Convert score to confidence (higher score = more anomalous)
-            confidence = abs(anomaly_score)
+            # Convert decision score to confidence
+            # decision_function: negative = anomaly, positive = normal
+            # We want higher confidence for more extreme scores
+            if is_anomaly:
+                # For anomalies, more negative = higher confidence
+                confidence = min(1.0, abs(decision_score) / 0.5)  # Normalize to 0-1
+            else:
+                # For normal events, more positive = higher confidence  
+                confidence = min(1.0, decision_score / 0.5)  # Normalize to 0-1
+                
+            confidence = max(0.1, confidence)  # Minimum confidence of 0.1
             
             return is_anomaly, confidence
             

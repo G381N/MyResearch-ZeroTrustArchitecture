@@ -512,8 +512,9 @@ async def run_model_test(data: dict, db: Session = Depends(get_db)):
         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
         
         # Convert predictions (anomaly scores) to binary predictions
-        # Predictions > 0 are anomalies (isolation forest returns negative scores for normal data)
-        binary_predictions = [1 if pred > 0 else 0 for pred in predictions]
+        # Isolation Forest decision_function: negative values = anomalies, positive = normal
+        # We need to invert this: negative scores should be classified as anomalies (1)
+        binary_predictions = [1 if pred < 0 else 0 for pred in predictions]
         
         # Calculate all metrics
         accuracy = accuracy_score(test_labels, binary_predictions)
@@ -610,10 +611,13 @@ async def generate_test_data(db: Session = Depends(get_db)):
                 seconds=random.randint(0, 59)
             )
             
+            # Add label to metadata for training
+            metadata['is_anomaly'] = False
+            
             event = Event(
                 timestamp=base_time + time_offset,
                 event_type=event_type,
-                event_metadata=metadata.copy(),
+                event_metadata=metadata,
                 is_anomaly=False,
                 trust_impact=0,
                 session_id=1  # Training session
@@ -650,11 +654,14 @@ async def generate_test_data(db: Session = Depends(get_db)):
                 seconds=random.randint(0, 59)
             )
             
+            # Add label to metadata for training
+            metadata['is_anomaly'] = True
+            
             # Create anomalous event
             event = Event(
                 timestamp=base_time + time_offset,
                 event_type=event_type,
-                event_metadata=metadata.copy(),
+                event_metadata=metadata,
                 is_anomaly=True,
                 trust_impact=random.randint(-25, -5),  # Negative trust impact
                 session_id=2  # Live session

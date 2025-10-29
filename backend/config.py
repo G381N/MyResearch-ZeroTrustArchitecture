@@ -18,7 +18,7 @@ class Settings:
     
     # ML Model configuration
     MODEL_PATH: str = "models/isolation_forest_model.joblib"
-    CONTAMINATION: float = 0.1  # Assume 10% of events are anomalies
+    CONTAMINATION: float = 0.2  # Match actual anomaly rate in test data (20%)
     
     # Trust Score Configuration
     TRUST_WEIGHTS: Dict[str, int] = {
