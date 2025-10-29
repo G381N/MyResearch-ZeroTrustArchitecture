@@ -470,13 +470,17 @@ async def run_model_test(data: dict, db: Session = Depends(get_db)):
         from sklearn.model_selection import train_test_split
         import numpy as np
         
+        # Check if we have both classes for stratification
+        unique_labels = list(set(labels))
+        use_stratify = len(unique_labels) > 1 and min(labels.count(0), labels.count(1)) >= 2
+        
         # Create indices for splitting
         indices = list(range(len(event_data)))
         train_indices, test_indices = train_test_split(
             indices, 
             test_size=test_percentage/100, 
             random_state=42,
-            stratify=labels if len(set(labels)) > 1 else None
+            stratify=labels if use_stratify else None
         )
         
         # Split events and labels
@@ -494,7 +498,12 @@ async def run_model_test(data: dict, db: Session = Depends(get_db)):
         test_features = test_ml_engine._extract_features(test_events)
         
         # Train the model
-        test_ml_engine.train(train_events, force_retrain=True)
+        training_success = test_ml_engine.train_model(train_events)
+        if not training_success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to train model on provided data. Need more diverse training events."
+            )
         
         # Make predictions on test set
         predictions = test_ml_engine.predict_batch(test_events)
