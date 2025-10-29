@@ -493,16 +493,39 @@ async def run_model_test(data: dict, db: Session = Depends(get_db)):
         from ml_engine import MLEngine
         test_ml_engine = MLEngine()
         
-        # Extract features for training
-        train_features = test_ml_engine._extract_features(train_events)
-        test_features = test_ml_engine._extract_features(test_events)
-        
-        # Train the model
-        training_success = test_ml_engine.train_model(train_events)
-        if not training_success:
+        try:
+            # Extract features for training and testing
+            logger.info(f"Extracting features from {len(train_events)} training events")
+            train_features = test_ml_engine._extract_features(train_events)
+            logger.info(f"Training features shape: {train_features.shape}")
+            
+            logger.info(f"Extracting features from {len(test_events)} test events")  
+            test_features = test_ml_engine._extract_features(test_events)
+            logger.info(f"Test features shape: {test_features.shape}")
+            
+        except Exception as e:
+            logger.error(f"Feature extraction failed: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to train model on provided data. Need more diverse training events."
+                detail=f"Feature extraction failed: {str(e)}"
+            )
+        
+        # Train the model with better error handling
+        try:
+            logger.info("Starting model training...")
+            training_success = test_ml_engine.train_model(train_events)
+            if not training_success:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Model training failed. Check if events have proper structure and metadata."
+                )
+            logger.info("Model training completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Model training error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model training failed: {str(e)}"
             )
         
         # Make predictions on test set
@@ -613,32 +636,44 @@ async def generate_test_data(db: Session = Depends(get_db)):
         base_time = datetime.now() - timedelta(days=7)
         
         for i in range(200):
-            user = random.choice(users)
-            event_type, metadata_func = random.choice(normal_patterns)
-            metadata = metadata_func(user)
-            
-            # Vary timing to create realistic patterns
-            time_offset = timedelta(
-                days=random.randint(0, 6),
-                hours=random.randint(8, 18),  # Business hours mostly
-                minutes=random.randint(0, 59),
-                seconds=random.randint(0, 59)
-            )
-            
-            # Add label to metadata for training
-            metadata['is_anomaly'] = False
-            
-            event = Event(
-                timestamp=base_time + time_offset,
-                event_type=event_type,
-                event_metadata=metadata,
-                is_anomaly=False,
-                trust_impact=0,
-                session_id=1  # Training session
-            )
-            
-            db.add(event)
-            events_created.append(event)
+            try:
+                user = random.choice(users)
+                event_type, metadata_func = random.choice(normal_patterns)
+                metadata = metadata_func(user)
+                
+                # Ensure metadata is a proper dict
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                
+                # Vary timing to create realistic patterns
+                time_offset = timedelta(
+                    days=random.randint(0, 6),
+                    hours=random.randint(8, 18),  # Business hours mostly
+                    minutes=random.randint(0, 59),
+                    seconds=random.randint(0, 59)
+                )
+                
+                # Add label to metadata for training
+                metadata['is_anomaly'] = False
+                
+                # Ensure required fields exist
+                metadata.setdefault('user_id', user)
+                
+                event = Event(
+                    timestamp=base_time + time_offset,
+                    event_type=event_type,
+                    event_metadata=metadata,
+                    is_anomaly=False,
+                    trust_impact=0,
+                    session_id=1  # Training session
+                )
+                
+                db.add(event)
+                events_created.append(event)
+                
+            except Exception as e:
+                logger.error(f"Error creating normal event {i}: {e}")
+                continue
         
         # Generate sophisticated anomalous behavior patterns (20% of data)
         suspicious_ips = ['203.0.113.1', '198.51.100.50', '185.220.100.240', '45.33.32.156', '104.244.42.1']
@@ -668,44 +703,56 @@ async def generate_test_data(db: Session = Depends(get_db)):
         
         # Generate 50 anomalous events with varied attack patterns
         for i in range(50):
-            event_type, metadata_func = random.choice(anomaly_patterns)
-            metadata = metadata_func()
-            
-            # Anomalies at random times, including off-hours
-            time_offset = timedelta(
-                days=random.randint(0, 6),
-                hours=random.randint(0, 23),
-                minutes=random.randint(0, 59),
-                seconds=random.randint(0, 59)
-            )
-            
-            # Add label to metadata for training
-            metadata['is_anomaly'] = True
-            
-            # Create anomalous event
-            event = Event(
-                timestamp=base_time + time_offset,
-                event_type=event_type,
-                event_metadata=metadata,
-                is_anomaly=True,
-                trust_impact=random.randint(-25, -5),  # Negative trust impact
-                session_id=2  # Live session
-            )
-            
-            db.add(event)
-            db.flush()  # Get the ID
-            
-            # Create corresponding anomaly record
-            anomaly = Anomaly(
-                event_id=event.id,
-                session_id=2,
-                confidence_score=random.uniform(0.7, 0.95),  # High confidence for real anomalies
-                is_resolved=False,
-                created_at=event.timestamp
-            )
-            
-            db.add(anomaly)
-            anomalies_created.append(anomaly)
+            try:
+                event_type, metadata_func = random.choice(anomaly_patterns)
+                metadata = metadata_func()
+                
+                # Ensure metadata is a proper dict
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                
+                # Anomalies at random times, including off-hours
+                time_offset = timedelta(
+                    days=random.randint(0, 6),
+                    hours=random.randint(0, 23),
+                    minutes=random.randint(0, 59),
+                    seconds=random.randint(0, 59)
+                )
+                
+                # Add label to metadata for training
+                metadata['is_anomaly'] = True
+                
+                # Ensure required fields exist
+                metadata.setdefault('user_id', random.choice(users))
+                
+                # Create anomalous event
+                event = Event(
+                    timestamp=base_time + time_offset,
+                    event_type=event_type,
+                    event_metadata=metadata,
+                    is_anomaly=True,
+                    trust_impact=random.randint(-25, -5),  # Negative trust impact
+                    session_id=2  # Live session
+                )
+                
+                db.add(event)
+                db.flush()  # Get the ID
+                
+                # Create corresponding anomaly record
+                anomaly = Anomaly(
+                    event_id=event.id,
+                    session_id=2,
+                    confidence_score=random.uniform(0.7, 0.95),  # High confidence for real anomalies
+                    is_resolved=False,
+                    created_at=event.timestamp
+                )
+                
+                db.add(anomaly)
+                anomalies_created.append(anomaly)
+                
+            except Exception as e:
+                logger.error(f"Error creating anomaly event {i}: {e}")
+                continue
         
         db.commit()
         

@@ -55,34 +55,47 @@ class MLEngine:
             # Auth success flag
             auth_success = 1 if event.get('metadata', {}).get('auth_success', False) else 0
             
-            # Suspicious indicators (new features for better detection)
-            suspicious_flag = 1 if event.get('metadata', {}).get('suspicious', False) else 0
-            unauthorized_flag = 1 if event.get('metadata', {}).get('unauthorized', False) else 0
-            attack_indicator = 1 if any(key in event.get('metadata', {}) for key in ['attack_type', 'brute_force', 'exfiltration', 'lateral_movement']) else 0
+            # Robust metadata extraction with safe defaults
+            metadata = event.get('metadata', {})
             
-            # Port risk score (high risk ports get higher scores)
-            port = event.get('metadata', {}).get('port', 443)
-            if isinstance(port, (int, float)):
-                high_risk_ports = [4444, 6666, 1337, 31337, 9999, 8080]
-                port_risk = 1 if port in high_risk_ports else 0
-            else:
+            # Suspicious indicators (with safe extraction)
+            try:
+                suspicious_flag = 1 if metadata.get('suspicious', False) else 0
+                unauthorized_flag = 1 if metadata.get('unauthorized', False) else 0
+                
+                # Check for attack indicators
+                attack_keys = ['attack_type', 'brute_force', 'exfiltration', 'lateral_movement']
+                attack_indicator = 1 if any(key in metadata for key in attack_keys) else 0
+                
+                # Port risk score (handle various data types)
+                port = metadata.get('port', 443)
                 port_risk = 0
-            
-            # File sensitivity score
-            file_path = event.get('metadata', {}).get('file_path', '')
-            if isinstance(file_path, str):
+                if port is not None:
+                    try:
+                        port_num = int(port)
+                        high_risk_ports = [4444, 6666, 1337, 31337, 9999, 8080]
+                        port_risk = 1 if port_num in high_risk_ports else 0
+                    except (ValueError, TypeError):
+                        port_risk = 0
+                
+                # File sensitivity score
+                file_path = str(metadata.get('file_path', ''))
                 sensitive_paths = ['/etc/', '/boot/', '/var/log/', '/root/']
                 file_sensitivity = 1 if any(path in file_path for path in sensitive_paths) else 0
-            else:
-                file_sensitivity = 0
-                
-            # IP reputation score (external IPs are more suspicious)
-            source_ip = event.get('metadata', {}).get('source_ip', '192.168.1.1')
-            if isinstance(source_ip, str):
-                # Internal IP ranges are less suspicious
+                    
+                # IP reputation score (external IPs are more suspicious)
+                source_ip = str(metadata.get('source_ip', '192.168.1.1'))
                 internal_ranges = ['192.168.', '10.0.', '172.16.', '127.0.']
                 ip_reputation = 0 if any(source_ip.startswith(range_) for range_ in internal_ranges) else 1
-            else:
+                
+            except Exception as e:
+                # Fallback to safe defaults if metadata parsing fails
+                logger.warning(f"Error parsing metadata for event: {e}")
+                suspicious_flag = 0
+                unauthorized_flag = 0
+                attack_indicator = 0
+                port_risk = 0
+                file_sensitivity = 0
                 ip_reputation = 0
             
             feature_vector = [
@@ -171,33 +184,39 @@ class MLEngine:
                 contamination = 0.15
                 logger.info(f"Using fallback contamination: {contamination:.3f}")
             
-            # Train Isolation Forest with highly optimized parameters
+            # Train Isolation Forest with stable parameters
             self.model = IsolationForest(
                 contamination=contamination,
                 random_state=42,
-                n_estimators=500,  # Even more trees for stability
-                max_samples=min(512, len(training_events)),  # Larger subsamples
-                max_features=0.8,  # Use 80% of features to reduce overfitting
-                bootstrap=True,  # Bootstrap for better generalization
-                n_jobs=-1,  # Use all CPU cores
-                warm_start=False,
-                behaviour='new'  # Use new behavior for better performance
+                n_estimators=200,  # Reduced for stability
+                max_samples=min(256, len(training_events)),  # Conservative subsamples
+                max_features=1.0,  # Use all features for now
+                bootstrap=False,  # Disable bootstrap to avoid issues
+                n_jobs=1,  # Single thread for stability
+                warm_start=False
             )
             
-            # Fit model on normal data only (Isolation Forest best practice)
-            normal_events = []
-            for i, event in enumerate(training_events):
-                if not event.get('metadata', {}).get('is_anomaly', False):
-                    normal_events.append(i)
+            # Always train on all data for stability (let contamination parameter handle anomalies)
+            # This is more robust than trying to filter normal events
+            logger.info(f"Training on all {len(training_events)} events with contamination={contamination:.3f}")
             
-            if len(normal_events) > 5:  # Train on normal data if we have enough
-                X_normal = X_scaled[normal_events]
-                self.model.fit(X_normal)
-                logger.info(f"Trained on {len(normal_events)} normal events")
-            else:
-                # Fallback: train on all data
-                self.model.fit(X_scaled)
-                logger.info("Trained on all events (insufficient normal event labels)")
+            # Validate features before training
+            if X_scaled.shape[0] == 0:
+                logger.error("No features extracted from training events")
+                return False
+                
+            if X_scaled.shape[1] == 0:
+                logger.error("No feature dimensions found")
+                return False
+                
+            # Check for invalid values
+            if np.any(np.isnan(X_scaled)) or np.any(np.isinf(X_scaled)):
+                logger.warning("Found NaN or infinite values in features, replacing with zeros")
+                X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+            
+            # Train the model
+            self.model.fit(X_scaled)
+            logger.info(f"Model training successful with {X_scaled.shape[0]} samples and {X_scaled.shape[1]} features")
             
             self.is_trained = True
             
